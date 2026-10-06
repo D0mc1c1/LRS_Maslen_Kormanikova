@@ -2,3 +2,6 @@ build/
 install/
 log/
 src/mt_executor_demo
+*.db3
+*.mcap
+.vscode/

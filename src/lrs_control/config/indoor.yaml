@@ -1,0 +1,15 @@
+/**:
+  ros__parameters:
+    map_path: "/home/USER/LRS-URK/maps/FEI_LRS_PCD/map.pcd"   # uprav
+    voxel_size: 0.10
+    inflation_radius: 0.50
+    spawn_offset: [13.0, 7.0, 0.0]
+    setpoint_rate: 20.0
+    tol_hard: 0.15
+    tol_soft: 0.50
+    tol_pass: 0.40
+    v_settle: 0.10
+    settle_time: 1.0
+    yaw_tol_deg: 5.0
+    yaw_hold_time: 1.0
+    landtakeoff_wait: 3.0
