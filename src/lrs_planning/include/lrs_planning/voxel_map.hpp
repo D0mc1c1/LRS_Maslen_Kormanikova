@@ -1,5 +1,6 @@
 #pragma once
 #include <cstddef>
+#include <cstdint> 
 #include <string>
 
 #include "lrs_planning/types.hpp"
@@ -7,21 +8,33 @@
 namespace lrs_planning
 {
 
-// Husta 3D mriezka obsadenosti. Zatial len kostra: load() nacita PCD
-// a zapamata si bounding box. Mriezku doplnis vo faze 1.1.
 class VoxelMap
 {
 public:
   bool load(const std::string & pcd_path, double voxel_size);
 
+  bool isOccupied(double x, double y, double z, double safety_radius = 0.0) const;
+  bool isOccupied(const Vec3 & p, double safety_radius = 0.0) const;
+
   std::size_t pointCount() const {return point_count_;}
   Vec3 minBound() const {return min_;}
   Vec3 maxBound() const {return max_;}
+
+  double voxelSize() const {return voxel_;}
+  size_t gridX() const {return nx_;}
+  size_t gridY() const {return ny_;}
+  size_t gridZ() const {return nz_;}
 
 private:
   std::size_t point_count_{0};
   double voxel_{0.1};
   Vec3 min_{}, max_{};
+
+  size_t nx_{0}, ny_{0}, nz_{0};
+  std::vector<uint8_t> occupancy_;  // 1 = obsadene, 0 = volne
+
+  bool coordToIndex(double x, double y, double z, int& ix, int& iy, int& iz) const;
+  size_t indexToLinear(int ix, int iy, int iz) const;
 };
 
 }  // namespace lrs_planning

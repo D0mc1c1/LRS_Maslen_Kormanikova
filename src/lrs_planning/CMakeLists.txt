@@ -13,6 +13,8 @@ find_package(PCL REQUIRED COMPONENTS common io)
 # SHARED + PCL ako PRIVATE: lrs_control nemusi o PCL nic vediet.
 add_library(${PROJECT_NAME} SHARED
   src/voxel_map.cpp
+  src/planning_algorithm.cpp
+  src/inflation.cpp
   # src/inflation.cpp
   # src/astar.cpp
   # src/path_simplifier.cpp
