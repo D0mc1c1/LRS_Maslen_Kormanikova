@@ -23,6 +23,7 @@
 #include "lrs_control/mavros_vehicle.hpp"
 #include "lrs_control/mission.hpp"
 #include "lrs_control/mission_executor.hpp"
+#include "lrs_planning/astar_planner.hpp"
 #include "lrs_planning/planner.hpp"
 
 using lrs_control::MissionExecutor;
@@ -38,7 +39,12 @@ public:
     const double tf_yaw_deg = declare_parameter<double>("local_from_map_yaw_deg", 90.0);
     const auto tf_xyz = declare_parameter<std::vector<double>>("local_from_map_xyz", {0.0, 0.0, 0.0});
     const auto yaw_frame = declare_parameter<std::string>("yaw_task_frame", "map");
-    const auto planner_type = declare_parameter<std::string>("planner", "straight");
+    const auto planner_type = declare_parameter<std::string>("planner", "astar");
+    const auto map_path = declare_parameter<std::string>("map_path", "");
+    const double voxel_size = declare_parameter<double>("voxel_size", 0.10);
+    const double inflation_radius = declare_parameter<double>("inflation_radius", 0.50);
+    // plne boxy (regaly): po 6 cislach [x_min, y_min, z_min, x_max, y_max, z_max] za sebou
+    const auto rack_boxes = declare_parameter<std::vector<double>>("rack_boxes", std::vector<double>{});
     const double rate = declare_parameter<double>("setpoint_rate", 20.0);
 
     lrs_control::ExecutorParams p;
@@ -70,10 +76,24 @@ public:
       planner_ = std::make_unique<lrs_planning::StraightLinePlanner>();
       RCLCPP_WARN(get_logger(), "planner=straight: priamky BEZ kontroly kolizii, "
         "len pre misie v otvorenom priestore!");
+    } else if (planner_type == "astar") {
+      if (map_path.empty()) {
+        throw std::runtime_error("planner=astar potrebuje parameter map_path");
+      }
+      if (rack_boxes.size() % 6 != 0) {
+        throw std::runtime_error("rack_boxes musi mat nasobok 6 cisel");
+      }
+      std::vector<lrs_planning::AStarPlanner::Box> boxes;
+      for (std::size_t i = 0; i < rack_boxes.size(); i += 6) {
+        boxes.push_back({{rack_boxes[i], rack_boxes[i + 1], rack_boxes[i + 2]},
+            {rack_boxes[i + 3], rack_boxes[i + 4], rack_boxes[i + 5]}});
+      }
+      planner_ = std::make_unique<lrs_planning::AStarPlanner>(
+        map_path, voxel_size, inflation_radius, boxes);
+      RCLCPP_INFO(get_logger(), "planner=astar: mapa %s, voxel %.2f m, inflacia %.2f m, %zu boxov",
+        map_path.c_str(), voxel_size, inflation_radius, boxes.size());
     } else {
-      // TODO (A1.1): sem pride A*, napr.
-      //   planner_ = std::make_unique<lrs_planning::AStarPlanner>(map_path, voxel, inflation, ...);
-      throw std::runtime_error("neznamy planner '" + planner_type + "' (zatial len 'straight')");
+      throw std::runtime_error("neznamy planner '" + planner_type + "' (straight / astar)");
     }
 
     // --- dron + stavovy automat -------------------------------------------

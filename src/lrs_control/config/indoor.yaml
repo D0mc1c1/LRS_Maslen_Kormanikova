@@ -2,7 +2,16 @@
 /**:
   ros__parameters:
     mission_file: ""                  # povinne, cesta k CSV
-    planner: "straight"               # zatial len "straight"; "astar" pride z A1.1
+    planner: "astar"                  # "astar" (A1.1) alebo "straight" (priamky, len test)
+
+    # A1.1 planovac
+    map_path: "/home/user/LRS-URK/maps/FEI_LRS_PCD/map.pcd"   # UPRAV na svoju cestu
+    voxel_size: 0.10                  # [m]
+    inflation_radius: 0.50            # [m] polomer drona + tolerancia + rezerva
+    # regaly ako plne boxy [x_min, y_min, z_min, x_max, y_max, z_max] (map frame),
+    # obal koliznych boxov z LRS-URK/models/fei_lrs_racks/model.sdf
+    rack_boxes: [1.07, 6.29, 0.0, 7.57, 7.34, 4.10,
+                 1.07, 10.84, 0.0, 7.57, 11.89, 4.10]
 
     # map frame (mapa, CSV) -> MAVROS local ENU:  local = R(yaw) * map + xyz
     # fei_lrs_gazebo.world: gazeboXYZToNED = 180 0 0 -> Gazebo X = sever

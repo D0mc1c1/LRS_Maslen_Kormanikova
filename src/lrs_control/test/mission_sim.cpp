@@ -6,15 +6,18 @@
 //  - pozicny setpoint je latched, rychlost a zrychlenie su obmedzene
 //  - LAND: klesa a po dosadnuti sa SAM disarmne (presne ako ArduPilot)
 // SIM_DETOUR=1 mission_sim ... -> namiesto priamok cesta so 4 medzibodmi (ako z A*)
+// SIM_MAP=<map.pcd> mission_sim ... -> skutocny A* z A1.1
 // Pouzitie: rychlo overit logiku (poradie taskov, landtakeoff, yaw) pred letom.
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <iostream>
+#include <memory>
 
 #include "lrs_control/geometry.hpp"
 #include "lrs_control/mission_executor.hpp"
+#include "lrs_planning/astar_planner.hpp"
 #include "lrs_planning/planner.hpp"
 
 using namespace lrs_control;
@@ -160,7 +163,15 @@ int main(int argc, char ** argv)
   lrs_planning::StraightLinePlanner straight;
   DetourPlanner detour;
   const bool use_detour = std::getenv("SIM_DETOUR") != nullptr;
-  lrs_planning::Planner & planner = use_detour ? static_cast<lrs_planning::Planner &>(detour) : straight;
+  // SIM_MAP=<map.pcd> -> skutocny A* z A1.1 (s regalmi ako boxy, inflacia 0.5 m)
+  std::unique_ptr<lrs_planning::AStarPlanner> astar;
+  if (const char * map = std::getenv("SIM_MAP")) {
+    astar = std::make_unique<lrs_planning::AStarPlanner>(map, 0.10, 0.50,
+        std::vector<lrs_planning::AStarPlanner::Box>{
+          {{1.07, 6.29, 0.0}, {7.57, 7.34, 4.10}}, {{1.07, 10.84, 0.0}, {7.57, 11.89, 4.10}}});
+  }
+  lrs_planning::Planner & planner = astar ? static_cast<lrs_planning::Planner &>(*astar) :
+    use_detour ? static_cast<lrs_planning::Planner &>(detour) : straight;
   MissionExecutor ex(veh, planner, mission, ExecutorParams{},
     [&veh](MissionExecutor::LogLevel l, const std::string & m) {
       const char * tag = l == MissionExecutor::LogLevel::Error ? "ERROR" :
