@@ -1,0 +1,13 @@
+# Testovacia misia pre A1.2 BEZ A* (planner:=straight).
+# Vsetky useky su priamky v otvorenej casti hangaru (vpravo od regalov),
+# overene proti map.pcd: kazdy usek je min. 1 m od prekazok.
+# Pokryva vsetky typy taskov a hard/soft.
+# x, y, z, precision, task -- map frame, metre a stupne (ENU, 0 = +X, CCW)
+x,y,z,precision,task
+13.00,7.00,1.00,soft,takeoff
+13.00,3.00,1.50,soft,-
+10.00,3.00,2.00,hard,yaw180
+10.00,7.00,1.50,hard,-
+15.00,7.00,1.50,hard,landtakeoff
+15.00,5.00,2.00,soft,yaw90
+13.00,7.00,1.50,hard,land

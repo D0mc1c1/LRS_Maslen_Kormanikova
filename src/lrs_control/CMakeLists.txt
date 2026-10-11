@@ -11,36 +11,34 @@ find_package(lrs_planning REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(mavros_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
-find_package(sensor_msgs REQUIRED)
-find_package(std_msgs REQUIRED)
 find_package(std_srvs REQUIRED)
-find_package(nav_msgs REQUIRED)
-find_package(visualization_msgs REQUIRED)
-find_package(tf2 REQUIRED)
-find_package(tf2_geometry_msgs REQUIRED)
 
-set(ROS_DEPS
-  rclcpp mavros_msgs geometry_msgs sensor_msgs std_msgs std_srvs
-  nav_msgs visualization_msgs tf2 tf2_geometry_msgs)
+# ---- jadro bez ROS: CSV misia + stavovy automat ----------------------------
+add_library(lrs_control_core STATIC
+  src/mission.cpp
+  src/mission_executor.cpp
+)
+target_include_directories(lrs_control_core PUBLIC include)
+target_link_libraries(lrs_control_core PUBLIC lrs_planning::lrs_planning)
 
-# ---- indoor misia (A1.2) -----------------------------------------------
+# ---- A1.2 indoor misia (ROS node) ----------------------------------------
 add_executable(indoor_mission
   src/indoor_mission_node.cpp
-  # src/mavros_interface.cpp
-  # src/mission_loader.cpp
-  # src/controller.cpp
-  # src/heading.cpp
+  src/mavros_vehicle.cpp
 )
-target_include_directories(indoor_mission PRIVATE include)
-ament_target_dependencies(indoor_mission ${ROS_DEPS})
-target_link_libraries(indoor_mission lrs_planning::lrs_planning)
+target_link_libraries(indoor_mission lrs_control_core)
+ament_target_dependencies(indoor_mission rclcpp mavros_msgs geometry_msgs std_srvs)
 
-# ---- outdoor misia (A1.3) - odkomentuj vo faze 3 ---------------------------
-# add_executable(outdoor_mission src/outdoor_mission_node.cpp ...)
-# target_include_directories(outdoor_mission PRIVATE include)
-# ament_target_dependencies(outdoor_mission ${ROS_DEPS})
+# ---- offline test stavoveho automatu (bez ROS, bez simulatora) ----------------
+add_executable(mission_sim test/mission_sim.cpp)
+target_link_libraries(mission_sim lrs_control_core)
 
-install(TARGETS indoor_mission DESTINATION lib/${PROJECT_NAME})
-install(DIRECTORY config missions rviz DESTINATION share/${PROJECT_NAME})
+# ---- A1.3 outdoor misia - odkomentuj vo faze 3 -----------------------------
+# add_executable(outdoor_mission src/outdoor_mission_node.cpp src/mavros_vehicle.cpp)
+# target_link_libraries(outdoor_mission lrs_control_core)
+# ament_target_dependencies(outdoor_mission rclcpp mavros_msgs geometry_msgs sensor_msgs std_srvs)
+
+install(TARGETS indoor_mission mission_sim DESTINATION lib/${PROJECT_NAME})
+install(DIRECTORY config missions DESTINATION share/${PROJECT_NAME})
 
 ament_package()
