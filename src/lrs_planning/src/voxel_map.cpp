@@ -70,6 +70,15 @@ size_t VoxelMap::indexToLinear(int ix, int iy, int iz) const
 
 bool VoxelMap::isOccupied(double x, double y, double z, double safety_radius) const
 {
+  // kvader zvacseny o safety_radius v kazdej osi (inflacia boxu)
+  for (const auto & b : boxes_) {
+    if (x > b.lo.x - safety_radius && x < b.hi.x + safety_radius &&
+        y > b.lo.y - safety_radius && y < b.hi.y + safety_radius &&
+        z > b.lo.z - safety_radius && z < b.hi.z + safety_radius) {
+      return true;
+    }
+  }
+
   int ix, iy, iz;
   
   //bez safety radius

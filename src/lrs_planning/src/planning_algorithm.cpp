@@ -88,11 +88,22 @@ bool astar(
   g_score[{start_x, start_y, start_z}] = 0.0;
   
   int iterations = 0;
-  const int MAX_ITERATIONS = 100000;
+  const int MAX_ITERATIONS = 2000000;  // mriezka ma ~1.6 M buniek
 
-  int dx[] = {-1,-1,-1,-1,-1, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, -1, 1, -1, 1};
-  int dy[] = {-1,-1,-1, 0, 0,-1,-1, 0, 0, 1, 1,-1,-1,-1, 0, 0,-1,-1, 1, 1, 0, 0,  0, 0, -1, -1};
-  int dz[] = {-1, 0, 1,-1, 1,-1, 0,-1, 1,-1, 0,-1, 0, 1,-1, 1,-1, 1,-1, 0,-1, 1,  0, 0,  0, 0};
+  // vsetkych 26 susedov = kazda kombinacia -1/0/1 okrem (0,0,0)
+  int dx[26], dy[26], dz[26];
+  double cost[26];  // dlzka kroku v metroch: 0.1 / 0.141 / 0.173 pri voxeli 0.1
+  int n = 0;
+  for (int a = -1; a <= 1; ++a) {
+    for (int b = -1; b <= 1; ++b) {
+      for (int c = -1; c <= 1; ++c) {
+        if (a == 0 && b == 0 && c == 0) continue;
+        dx[n] = a; dy[n] = b; dz[n] = c;
+        cost[n] = std::sqrt(double(a * a + b * b + c * c)) * voxel_size;
+        ++n;
+      }
+    }
+  }
   
   while (!open.empty() && iterations < MAX_ITERATIONS) {
     iterations++;
@@ -120,6 +131,12 @@ bool astar(
 
       out_path.push_back(start);
       std::reverse(out_path.begin(), out_path.end());
+      // posledny bod = presny ciel, nie stred voxelu (odchylka az 8 cm)
+      if (out_path.size() >= 2) {
+        out_path.back() = goal;
+      } else {
+        out_path.push_back(goal);
+      }
       
       auto end_time = std::chrono::high_resolution_clock::now();
       out_time_ms = std::chrono::duration<double, std::milli>(end_time - start_time).count();
@@ -143,14 +160,7 @@ bool astar(
         continue;
       }
       
-      double move_cost = 1.0;
-      if (i < 6) {
-      move_cost = 1.0;
-      } else if (i < 18) {
-      move_cost = 1.414;
-      } else {
-      move_cost = 1.732;
-      }
+      double move_cost = cost[i];
 
       double new_g = g_score[{current.x, current.y, current.z}] + move_cost;
       

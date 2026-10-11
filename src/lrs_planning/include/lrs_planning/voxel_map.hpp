@@ -2,6 +2,7 @@
 #include <cstddef>
 #include <cstdint> 
 #include <string>
+#include <vector>
 
 #include "lrs_planning/types.hpp"
 
@@ -12,6 +13,9 @@ class VoxelMap
 {
 public:
   bool load(const std::string & pcd_path, double voxel_size);
+
+  // plny kvader (regal): prekazka bez ohladu na mracno bodov
+  void addSolidBox(const Vec3 & lo, const Vec3 & hi) {boxes_.push_back({lo, hi});}
 
   bool isOccupied(double x, double y, double z, double safety_radius = 0.0) const;
   bool isOccupied(const Vec3 & p, double safety_radius = 0.0) const;
@@ -32,6 +36,9 @@ private:
 
   size_t nx_{0}, ny_{0}, nz_{0};
   std::vector<uint8_t> occupancy_;  // 1 = obsadene, 0 = volne
+
+  struct Box { Vec3 lo, hi; };
+  std::vector<Box> boxes_;
 
   bool coordToIndex(double x, double y, double z, int& ix, int& iy, int& iz) const;
   size_t indexToLinear(int ix, int iy, int iz) const;
