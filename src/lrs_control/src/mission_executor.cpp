@@ -1,5 +1,6 @@
 #include "lrs_control/mission_executor.hpp"
 
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <sstream>
@@ -83,7 +84,7 @@ void MissionExecutor::tick(double now)
 
   switch (state_) {
     case State::WAIT_CONNECTION: onWaitConnection(st); break;
-    case State::PLAN: onPlan(st); break;
+    case State::PLAN: onPlan(st, now); break;
     case State::SET_MODE: onSetMode(st, now); break;
     case State::ARM: onArm(st, now); break;
     case State::TAKEOFF: onTakeoff(st, now); break;
@@ -179,39 +180,66 @@ void MissionExecutor::onWaitConnection(const VehicleState & st)
   }
 }
 
-void MissionExecutor::onPlan(const VehicleState & st)
+void MissionExecutor::onPlan(const VehicleState & st, double now)
 {
-  if (st.armed) {
-    abort("dron je uz armnuty, misiu spusti s dronom na zemi");
+  // 1) prvy tick v PLAN: kontroly a spustenie planovania vo vlakne
+  if (!plan_future_.valid()) {
+    if (st.armed) {
+      abort("dron je uz armnuty, misiu spusti s dronom na zemi");
+      return;
+    }
+    // kontrola prevodu map <-> local: dron by mal stat pod prvym (takeoff) waypointom
+    const auto & wp0 = mission_.front();
+    if (wp0.task == TaskType::Takeoff && distXY(st.pos, wp0.p) > p_.start_check_dist) {
+      log(LogLevel::Warn, "dron stoji v " + pt(st.pos) + ", ale takeoff WP1 je " + pt(wp0.p) +
+        " (" + fmt("%.1f", distXY(st.pos, wp0.p)) + " m). Ak dron naozaj stoji na WP1, "
+        "je zly prevod map->local (local_from_map_yaw_deg / local_from_map_xyz)!");
+    }
+    const Vec3 first_start{st.pos.x, st.pos.y, mission_.front().p.z};
+    log(LogLevel::Info, "planujem " + std::to_string(mission_.size()) + " segmentov (vo vlakne)");
+    last_plan_log_ = now;
+    // mission_ a planner_ pouziva pocas planovania len toto vlakno
+    plan_future_ = std::async(std::launch::async, [this, first_start]() {
+        PlanOutcome out;
+        for (std::size_t i = 0; i < mission_.size(); ++i) {
+          const Vec3 a = i == 0 ? first_start : mission_[i - 1].p;
+          const Vec3 b = mission_[i].p;
+          const auto r = planner_.plan(a, b);
+          if (!r || r->path.empty()) {
+            out.error = "segment " + std::to_string(i) + ": " + pt(a) + " -> " + pt(b) +
+            " NEMA CESTU (riadok " + std::to_string(mission_[i].line) + " v misii)";
+            return out;
+          }
+          char line[160];
+          std::snprintf(line, sizeof(line),
+          "  segment %zu -> WP%zu %s: %zu bodov (pred zjednodusenim %zu), %.1f ms",
+          i, i + 1, describe(mission_[i]).c_str(), r->path.size(), r->raw_points, r->time_ms);
+          out.lines.push_back(line);
+          out.segments.push_back(r->path);
+        }
+        return out;
+      });
     return;
   }
 
-  // kontrola prevodu map <-> local: dron by mal stat pod prvym (takeoff) waypointom
-  const auto & wp0 = mission_.front();
-  if (wp0.task == TaskType::Takeoff && distXY(st.pos, wp0.p) > p_.start_check_dist) {
-    log(LogLevel::Warn, "dron stoji v " + pt(st.pos) + ", ale takeoff WP1 je " + pt(wp0.p) +
-      " (" + fmt("%.1f", distXY(st.pos, wp0.p)) + " m). Ak dron naozaj stoji na WP1, "
-      "je zly prevod map->local (local_from_map_yaw_deg / local_from_map_xyz)!");
-  }
-
-  segments_.clear();
-  const Vec3 first_start{st.pos.x, st.pos.y, mission_.front().p.z};
-  log(LogLevel::Info, "planujem " + std::to_string(mission_.size()) + " segmentov");
-  for (std::size_t i = 0; i < mission_.size(); ++i) {
-    const Vec3 a = i == 0 ? first_start : mission_[i - 1].p;
-    const Vec3 b = mission_[i].p;
-    const auto r = planner_.plan(a, b);
-    if (!r || r->path.empty()) {
-      abort("segment " + std::to_string(i) + ": " + pt(a) + " -> " + pt(b) +
-        " NEMA CESTU (riadok " + std::to_string(mission_[i].line) + " v misii)");
-      return;
+  // 2) dalsie ticky: cakame na vysledok, riadiaci timer bezi dalej
+  if (plan_future_.wait_for(std::chrono::seconds(0)) != std::future_status::ready) {
+    if (now - last_plan_log_ >= 5.0) {
+      log(LogLevel::Info, "  planovanie bezi " + fmt("%.0f", inState(now)) + " s ...");
+      last_plan_log_ = now;
     }
-    char b2[160];
-    std::snprintf(b2, sizeof(b2), "  segment %zu -> WP%zu %s: %zu bodov (pred zjednodusenim %zu), %.1f ms",
-      i, i + 1, describe(mission_[i]).c_str(), r->path.size(), r->raw_points, r->time_ms);
-    log(LogLevel::Info, b2);
-    segments_.push_back(r->path);
+    return;
   }
+  PlanOutcome out = plan_future_.get();
+  for (const auto & l : out.lines) {
+    log(LogLevel::Info, l);
+  }
+  if (!out.error.empty()) {
+    abort(out.error);
+    return;
+  }
+  segments_ = std::move(out.segments);
+  log(LogLevel::Info, "planovanie hotove za " + fmt("%.1f", inState(now)) + " s");
   startTakeoffSequence(mission_.front().p.z, false);
 }
 

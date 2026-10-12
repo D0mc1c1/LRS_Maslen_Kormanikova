@@ -1,5 +1,6 @@
 #pragma once
 #include <functional>
+#include <future>
 #include <optional>
 #include <string>
 #include <vector>
@@ -92,7 +93,7 @@ private:
 
   // jednotlive stavy
   void onWaitConnection(const VehicleState & st);
-  void onPlan(const VehicleState & st);
+  void onPlan(const VehicleState & st, double now);
   void onSetMode(const VehicleState & st, double now);
   void onArm(const VehicleState & st, double now);
   void onTakeoff(const VehicleState & st, double now);
@@ -132,6 +133,17 @@ private:
   double mission_t0_{-1.0};
 
   std::vector<lrs_planning::Path> segments_;  // segments_[i] konci vo waypointe i
+
+  // Planovanie bezi v samostatnom vlakne (std::async), aby neblokovalo riadiaci
+  // timer. Vysledok sa vyzdvihne v stave PLAN, ked je future pripravena.
+  struct PlanOutcome
+  {
+    std::vector<lrs_planning::Path> segments;
+    std::vector<std::string> lines;   // logy po segmentoch
+    std::string error;                // prazdne = OK
+  };
+  std::future<PlanOutcome> plan_future_;
+  double last_plan_log_{0.0};
   std::size_t wp_idx_{0};
   std::size_t path_idx_{0};     // index cieloveho bodu v segments_[wp_idx_]
 

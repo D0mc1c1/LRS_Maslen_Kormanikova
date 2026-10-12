@@ -4,6 +4,10 @@ project(lrs_control)
 if(NOT CMAKE_CXX_STANDARD)
   set(CMAKE_CXX_STANDARD 17)
 endif()
+# bez build type kompiluje colcon BEZ optimalizacie -> A* je ~10x pomalsi
+if(NOT CMAKE_BUILD_TYPE)
+  set(CMAKE_BUILD_TYPE Release)
+endif()
 add_compile_options(-Wall -Wextra -Wpedantic)
 
 find_package(ament_cmake REQUIRED)

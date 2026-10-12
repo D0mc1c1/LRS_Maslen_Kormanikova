@@ -14,6 +14,8 @@
 #include <cstdlib>
 #include <iostream>
 #include <memory>
+#include <thread>
+#include <chrono>
 
 #include "lrs_control/geometry.hpp"
 #include "lrs_control/mission_executor.hpp"
@@ -182,6 +184,10 @@ int main(int argc, char ** argv)
   const double dt = 0.01;   // simulacia 100 Hz
   int k = 0;
   while (!ex.finished() && veh.t() < 900.0) {
+    if (ex.state() == MissionExecutor::State::PLAN) {
+      // planovanie bezi vo vlakne v realnom case -> simulacia pocka
+      std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
     veh.step(dt);
     if (++k % 5 == 0) {     // riadenie 20 Hz
       ex.tick(veh.t());
