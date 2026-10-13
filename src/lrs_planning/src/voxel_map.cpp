@@ -129,6 +129,15 @@ bool VoxelMap::isOccupied(double x, double y, double z, double safety_radius) co
   return false;
 }
 
+bool VoxelMap::isOccupiedCloud(double x, double y, double z) const
+{
+  int ix, iy, iz;
+  if (!coordToIndex(x, y, z, ix, iy, iz)) {
+    return false;
+  }
+  return occupancy_[indexToLinear(ix, iy, iz)] != 0;
+}
+
 bool VoxelMap::isOccupied(const Vec3 & p, double safety_radius) const
 {
   return isOccupied(p.x, p.y, p.z, safety_radius);

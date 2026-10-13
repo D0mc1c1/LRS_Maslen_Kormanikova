@@ -47,9 +47,9 @@ static void usage()
 {
   std::cerr <<
     "usage:\n"
-    "  plan_cli <map.pcd> <sx> <sy> <sz> <gx> <gy> <gz> [radius=0.5] [voxel=0.1]\n"
-    "  plan_cli <map.pcd> --mission <mission.csv> [radius=0.5] [voxel=0.1]\n"
-    "  plan_cli <map.pcd> --query <x> <y> <z> [radius=0.5] [voxel=0.1]\n";
+    "  plan_cli <map.pcd> <sx> <sy> <sz> <gx> <gy> <gz> [radius=0.7] [voxel=0.1] [max_z=3.0]\n"
+    "  plan_cli <map.pcd> --mission <mission.csv> [radius=0.7] [voxel=0.1] [max_z=3.0]\n"
+    "  plan_cli <map.pcd> --query <x> <y> <z> [radius=0.7] [voxel=0.1] [max_z=3.0]\n";
 }
 
 int main(int argc, char ** argv)
@@ -71,8 +71,9 @@ int main(int argc, char ** argv)
     usage();
     return 1;
   }
-  const double safety_radius = argc > extra ? std::stod(argv[extra]) : 0.5;
+  const double safety_radius = argc > extra ? std::stod(argv[extra]) : 0.7;
   const double voxel = argc > extra + 1 ? std::stod(argv[extra + 1]) : 0.1;
+  const double max_z = argc > extra + 2 ? std::stod(argv[extra + 2]) : 3.0;  // strop letu
 
   lrs_planning::VoxelMap map;
   if (!map.load(argv[1], voxel)) {
@@ -82,6 +83,9 @@ int main(int argc, char ** argv)
   // regaly: obal koliznych boxov z models/fei_lrs_racks/model.sdf
   map.addSolidBox({1.07, 6.29, 0.0}, {7.57, 7.34, 4.10});    // regal A
   map.addSolidBox({1.07, 10.84, 0.0}, {7.57, 11.89, 4.10});  // regal B
+  // strop letu: stred drona max. max_z (nad regalmi v mape chybaju body)
+  map.addSolidBox({map.minBound().x - 10.0, map.minBound().y - 10.0, max_z + safety_radius},
+    {map.maxBound().x + 10.0, map.maxBound().y + 10.0, map.maxBound().z + 100.0});
 
   const auto mn = map.minBound();
   const auto mx = map.maxBound();
@@ -91,7 +95,8 @@ int main(int argc, char ** argv)
             << "bbox max: " << mx.x << " " << mx.y << " " << mx.z << "\n"
             << "voxel count: " << map.gridX() * map.gridY() * map.gridZ() << "\n"
             << "grid size: " << map.gridX() << " x " << map.gridY() << " x " << map.gridZ() << "\n"
-            << "safety radius: " << safety_radius << " m, voxel: " << voxel << " m\n\n";
+            << "safety radius: " << safety_radius << " m, voxel: " << voxel << " m, max_z: "
+            << max_z << " m\n\n";
 
   if (mode == "--query") {
     const double x = std::stod(argv[3]), y = std::stod(argv[4]), z = std::stod(argv[5]);

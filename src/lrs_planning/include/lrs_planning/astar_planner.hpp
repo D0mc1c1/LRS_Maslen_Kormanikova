@@ -1,4 +1,5 @@
 #pragma once
+#include <limits>
 #include <optional>
 #include <string>
 #include <vector>
@@ -17,9 +18,12 @@ public:
   struct Box { Vec3 lo, hi; };
 
   // Nacita mapu a prida plne boxy (regaly). Pri chybe vyhodi std::runtime_error.
+  // max_z = najvyssia povolena vyska STREDU drona [m] (strop letu). Nad regalmi
+  // v mape chybaju body, bez stropu by A* naplanoval let ponad regaly.
   AStarPlanner(
     const std::string & map_path, double voxel_size, double safety_radius,
-    const std::vector<Box> & solid_boxes);
+    const std::vector<Box> & solid_boxes,
+    double max_z = std::numeric_limits<double>::infinity());
 
   std::optional<PlanResult> plan(const Vec3 & start, const Vec3 & goal) override;
 

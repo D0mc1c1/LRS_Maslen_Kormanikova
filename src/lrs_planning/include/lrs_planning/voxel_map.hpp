@@ -18,6 +18,8 @@ public:
   void addSolidBox(const Vec3 & lo, const Vec3 & hi) {boxes_.push_back({lo, hi});}
 
   bool isOccupied(double x, double y, double z, double safety_radius = 0.0) const;
+  // len mracno bodov (bez boxov regalov a stropu, bez inflacie) - pre vizualizaciu
+  bool isOccupiedCloud(double x, double y, double z) const;
   bool isOccupied(const Vec3 & p, double safety_radius = 0.0) const;
 
   std::size_t pointCount() const {return point_count_;}

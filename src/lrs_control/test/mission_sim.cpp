@@ -165,12 +165,13 @@ int main(int argc, char ** argv)
   lrs_planning::StraightLinePlanner straight;
   DetourPlanner detour;
   const bool use_detour = std::getenv("SIM_DETOUR") != nullptr;
-  // SIM_MAP=<map.pcd> -> skutocny A* z A1.1 (s regalmi ako boxy, inflacia 0.5 m)
+  // SIM_MAP=<map.pcd> -> skutocny A* z A1.1 (s regalmi ako boxy, inflacia 0.7 m, strop 3.0 m)
   std::unique_ptr<lrs_planning::AStarPlanner> astar;
   if (const char * map = std::getenv("SIM_MAP")) {
-    astar = std::make_unique<lrs_planning::AStarPlanner>(map, 0.10, 0.50,
+    // rovnake hodnoty ako v config/indoor.yaml (inflacia 0.7 m, strop 3.0 m)
+    astar = std::make_unique<lrs_planning::AStarPlanner>(map, 0.10, 0.70,
         std::vector<lrs_planning::AStarPlanner::Box>{
-          {{1.07, 6.29, 0.0}, {7.57, 7.34, 4.10}}, {{1.07, 10.84, 0.0}, {7.57, 11.89, 4.10}}});
+          {{1.07, 6.29, 0.0}, {7.57, 7.34, 4.10}}, {{1.07, 10.84, 0.0}, {7.57, 11.89, 4.10}}}, 3.0);
   }
   lrs_planning::Planner & planner = astar ? static_cast<lrs_planning::Planner &>(*astar) :
     use_detour ? static_cast<lrs_planning::Planner &>(detour) : straight;

@@ -11,18 +11,22 @@
 //   sensor_group   : odbery MAVROS tem (v MavrosVehicle, zapis pod mutexom)
 //   service_group  : odpovede MAVROS sluzieb (v MavrosVehicle)
 #include <chrono>
+#include <cmath>
 #include <memory>
 #include <string>
 #include <vector>
 
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp/version.h>
+#include <nav_msgs/msg/path.hpp>
 #include <std_srvs/srv/trigger.hpp>
+#include <visualization_msgs/msg/marker_array.hpp>
 
 #include "lrs_control/geometry.hpp"
 #include "lrs_control/mavros_vehicle.hpp"
 #include "lrs_control/mission.hpp"
 #include "lrs_control/mission_executor.hpp"
+#include "lrs_control/viz.hpp"
 #include "lrs_planning/astar_planner.hpp"
 #include "lrs_planning/planner.hpp"
 
@@ -42,7 +46,9 @@ public:
     const auto planner_type = declare_parameter<std::string>("planner", "astar");
     const auto map_path = declare_parameter<std::string>("map_path", "");
     const double voxel_size = declare_parameter<double>("voxel_size", 0.10);
-    const double inflation_radius = declare_parameter<double>("inflation_radius", 0.50);
+    const double viz_max_z = declare_parameter<double>("viz_max_z", 4.0);  // RViz: nad tym priesvitna strecha
+    const double inflation_radius = declare_parameter<double>("inflation_radius", 0.70);
+    const double max_flight_z = declare_parameter<double>("max_flight_z", 3.0);
     // plne boxy (regaly): po 6 cislach [x_min, y_min, z_min, x_max, y_max, z_max] za sebou
     const auto rack_boxes = declare_parameter<std::vector<double>>("rack_boxes", std::vector<double>{});
     const double rate = declare_parameter<double>("setpoint_rate", 20.0);
@@ -72,6 +78,7 @@ public:
     }
 
     // --- planovac (A1.1) ---------------------------------------------------
+    std::vector<lrs_planning::AStarPlanner::Box> boxes;
     if (planner_type == "straight") {
       planner_ = std::make_unique<lrs_planning::StraightLinePlanner>();
       RCLCPP_WARN(get_logger(), "planner=straight: priamky BEZ kontroly kolizii, "
@@ -80,18 +87,14 @@ public:
       if (map_path.empty()) {
         throw std::runtime_error("planner=astar potrebuje parameter map_path");
       }
-      if (rack_boxes.size() % 6 != 0) {
-        throw std::runtime_error("rack_boxes musi mat nasobok 6 cisel");
-      }
-      std::vector<lrs_planning::AStarPlanner::Box> boxes;
-      for (std::size_t i = 0; i < rack_boxes.size(); i += 6) {
-        boxes.push_back({{rack_boxes[i], rack_boxes[i + 1], rack_boxes[i + 2]},
-            {rack_boxes[i + 3], rack_boxes[i + 4], rack_boxes[i + 5]}});
-      }
-      planner_ = std::make_unique<lrs_planning::AStarPlanner>(
-        map_path, voxel_size, inflation_radius, boxes);
-      RCLCPP_INFO(get_logger(), "planner=astar: mapa %s, voxel %.2f m, inflacia %.2f m, %zu boxov",
-        map_path.c_str(), voxel_size, inflation_radius, boxes.size());
+      boxes = lrs_control::parseBoxes(rack_boxes);
+      auto astar = std::make_unique<lrs_planning::AStarPlanner>(
+        map_path, voxel_size, inflation_radius, boxes, max_flight_z);
+      astar_ = astar.get();
+      planner_ = std::move(astar);
+      RCLCPP_INFO(get_logger(),
+        "planner=astar: mapa %s, voxel %.2f m, inflacia %.2f m, strop %.2f m, %zu boxov",
+        map_path.c_str(), voxel_size, inflation_radius, max_flight_z, boxes.size());
     } else {
       throw std::runtime_error("neznamy planner '" + planner_type + "' (straight / astar)");
     }
@@ -122,6 +125,19 @@ public:
         }
       });
 
+    // --- vizualizacia v RViz2 (/lrs/viz/*) --------------------------------------
+    mission_ = mission;
+    const auto latched = rclcpp::QoS(rclcpp::KeepLast(1)).reliable().transient_local();
+    map_pub_ = create_publisher<visualization_msgs::msg::MarkerArray>("/lrs/viz/map", latched);
+    plan_pub_ = create_publisher<visualization_msgs::msg::MarkerArray>("/lrs/viz/plan", latched);
+    flown_pub_ = create_publisher<nav_msgs::msg::Path>("/lrs/viz/flown", 10);
+    flown_.header.frame_id = "map";
+    if (astar_) {
+      map_pub_->publish(lrs_control::mapMarkers(astar_->map(), boxes, inflation_radius, viz_max_z,
+        max_flight_z));
+    }
+    plan_pub_->publish(lrs_control::planMarkers(mission_, {}));  // zatial len waypointy
+
     control_group_ = create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
     control_timer_ = create_wall_timer(
       std::chrono::duration<double>(1.0 / rate), [this]() {controlTick();}, control_group_);
@@ -150,12 +166,45 @@ private:
   void controlTick()
   {
     executor_->tick(now().seconds());
+    publishViz();
     if (executor_->state() == MissionExecutor::State::DONE && !finished_) {
       finished_ = true;
       RCLCPP_INFO(get_logger(), "misia dokoncena, koncim");
       rclcpp::shutdown();
     }
   }
+
+  // RViz: plan po dokonceni planovania, preletena trasa 5 Hz
+  void publishViz()
+  {
+    if (!plan_published_ && !executor_->segments().empty()) {
+      plan_pub_->publish(lrs_control::planMarkers(mission_, executor_->segments()));
+      plan_published_ = true;
+    }
+    if (++viz_tick_ % 4 != 0) return;
+    const auto st = vehicle_->state();
+    if (!st.has_pose || flown_.poses.size() > 20000) return;
+    geometry_msgs::msg::PoseStamped ps;
+    ps.header.frame_id = "map";
+    ps.header.stamp = now();
+    ps.pose.position.x = st.pos.x;
+    ps.pose.position.y = st.pos.y;
+    ps.pose.position.z = st.pos.z;
+    ps.pose.orientation.z = std::sin(st.yaw / 2.0);
+    ps.pose.orientation.w = std::cos(st.yaw / 2.0);
+    flown_.header.stamp = ps.header.stamp;
+    flown_.poses.push_back(ps);
+    flown_pub_->publish(flown_);
+  }
+
+  lrs_planning::AStarPlanner * astar_{nullptr};  // vlastni ho planner_
+  lrs_control::Mission mission_;
+  rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr map_pub_;
+  rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr plan_pub_;
+  rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr flown_pub_;
+  nav_msgs::msg::Path flown_;
+  bool plan_published_{false};
+  unsigned viz_tick_{0};
 
   std::unique_ptr<lrs_planning::Planner> planner_;
   std::unique_ptr<lrs_control::MavrosVehicle> vehicle_;

@@ -7,11 +7,18 @@
     # A1.1 planovac
     map_path: "/home/user/LRS-URK/maps/FEI_LRS_PCD/map.pcd"   # UPRAV na svoju cestu
     voxel_size: 0.10                  # [m]
-    inflation_radius: 0.50            # [m] polomer drona + tolerancia + rezerva
+    # [m] inflacia = polomer drona (~0.3) + tolerancia prechodu medzibodom (tol_pass 0.4).
+    # Pri 0.5 viedla cesta 1.07 m sirokou medzerou medzi stenou a regalom (koridor 7 cm).
+    # Max. ~0.8: waypointy (2.81, 8.15) su len 0.81 m od regalu.
+    inflation_radius: 0.70
+    # [m] strop letu (max. vyska stredu drona). Nad regalmi v mape chybaju body,
+    # bez stropu A* planoval let ponad regal vo vyske ~4.8 m.
+    max_flight_z: 3.0
     # regaly ako plne boxy [x_min, y_min, z_min, x_max, y_max, z_max] (map frame),
     # obal koliznych boxov z LRS-URK/models/fei_lrs_racks/model.sdf
     rack_boxes: [1.07, 6.29, 0.0, 7.57, 7.34, 4.10,
                  1.07, 10.84, 0.0, 7.57, 11.89, 4.10]
+    viz_max_z: 4.0                    # RViz: voxely nad touto vyskou = priesvitna strecha (namespace "strecha")
 
     # map frame (mapa, CSV) -> MAVROS local ENU:  local = R(yaw) * map + xyz
     # fei_lrs_gazebo.world: gazeboXYZToNED = 180 0 0 -> Gazebo X = sever
