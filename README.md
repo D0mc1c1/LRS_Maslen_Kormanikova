@@ -37,3 +37,21 @@ ros2 run lrs_control indoor_mission --ros-args \
 SIM_MAP=$MAP ros2 run lrs_control mission_sim src/lrs_control/missions/exam_example.csv   # A* + stavovy automat
 ros2 run lrs_control mission_sim src/lrs_control/missions/test_open.csv                   # priamky
 ```
+
+## A1.3 – outdoor misia
+
+### Simulácia (outdoor svet)
+
+```bash
+cd ~/LRS-URK && scripts/run_gazebo.sh fei_lrs_outdoor.world                          # terminál 1
+cd ~/LRS-URK && HOME_LOCATION=48.15144444,17.07375000,150,0 scripts/run_sitl.sh      # terminál 2
+cd ~/LRS-URK && scripts/run_mavros.sh                                                # terminál 3
+```
+
+### Časť 1: GPS, home, kompas
+
+```bash
+ros2 run lrs_control geo_test      # prevod LLA <-> ENU a kompasu, bez ROS
+ros2 run lrs_control gps_info      # 1 Hz: lat/lon/alt, ENU od home, local position, kurz
+```
+

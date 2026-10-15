@@ -18,6 +18,8 @@ find_package(geometry_msgs REQUIRED)
 find_package(std_srvs REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(visualization_msgs REQUIRED)
+find_package(sensor_msgs REQUIRED)
+find_package(std_msgs REQUIRED)
 
 # ---- jadro bez ROS: CSV misia + stavovy automat ----------------------------
 add_library(lrs_control_core STATIC
@@ -35,7 +37,7 @@ add_executable(indoor_mission
 )
 target_link_libraries(indoor_mission lrs_control_core)
 ament_target_dependencies(indoor_mission rclcpp mavros_msgs geometry_msgs std_srvs
-  nav_msgs visualization_msgs)
+  nav_msgs visualization_msgs sensor_msgs std_msgs)
 
 # ---- vizualizacia planu v RViz2 bez simulatora -------------------------------
 add_executable(plan_viz
@@ -49,12 +51,25 @@ ament_target_dependencies(plan_viz rclcpp geometry_msgs visualization_msgs)
 add_executable(mission_sim test/mission_sim.cpp)
 target_link_libraries(mission_sim lrs_control_core)
 
-# ---- A1.3 outdoor misia - odkomentuj vo faze 3 -----------------------------
+# ---- A1.3 cast 1: diagnostika GPS, home a kompasu ----------------------------
+add_executable(gps_info
+  src/gps_info_node.cpp
+  src/mavros_vehicle.cpp
+)
+target_link_libraries(gps_info lrs_control_core)
+ament_target_dependencies(gps_info rclcpp mavros_msgs geometry_msgs sensor_msgs std_msgs)
+
+# ---- A1.3: test prevodu LLA <-> ENU a kompasu (bez ROS) -----------------------
+add_executable(geo_test test/geo_test.cpp)
+target_link_libraries(geo_test lrs_control_core)
+
+# ---- A1.3 outdoor misia - pride v casti 2 ------------------------------------
 # add_executable(outdoor_mission src/outdoor_mission_node.cpp src/mavros_vehicle.cpp)
 # target_link_libraries(outdoor_mission lrs_control_core)
-# ament_target_dependencies(outdoor_mission rclcpp mavros_msgs geometry_msgs sensor_msgs std_srvs)
+# ament_target_dependencies(outdoor_mission rclcpp mavros_msgs geometry_msgs sensor_msgs std_msgs std_srvs)
 
-install(TARGETS indoor_mission mission_sim plan_viz DESTINATION lib/${PROJECT_NAME})
+install(TARGETS indoor_mission mission_sim plan_viz gps_info geo_test
+  DESTINATION lib/${PROJECT_NAME})
 install(DIRECTORY config missions rviz DESTINATION share/${PROJECT_NAME})
 
 ament_package()

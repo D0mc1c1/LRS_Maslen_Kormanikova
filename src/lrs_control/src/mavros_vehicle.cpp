@@ -66,6 +66,52 @@ MavrosVehicle::MavrosVehicle(rclcpp::Node & node, const FrameTransform & tf)
       st_.vel = tf_.dirToMap({m.twist.linear.x, m.twist.linear.y, m.twist.linear.z});
     }, opts);
 
+  // --- A1.3: GPS, home, kompas -------------------------------------------
+  gps_sub_ = node_.create_subscription<sensor_msgs::msg::NavSatFix>(
+    "/mavros/global_position/global", qos,
+    [this](const sensor_msgs::msg::NavSatFix & m) {
+      std::lock_guard<std::mutex> lk(mtx_);
+      st_.has_gps = true;
+      st_.gps_status = m.status.status;
+      st_.gps = {m.latitude, m.longitude, m.altitude};
+      // kovariancia [m^2]: diagonala E, N; 0 = COVARIANCE_TYPE_UNKNOWN
+      if (m.position_covariance_type != sensor_msgs::msg::NavSatFix::COVARIANCE_TYPE_UNKNOWN) {
+        st_.h_acc = std::sqrt((m.position_covariance[0] + m.position_covariance[4]) / 2.0);
+      }
+    }, opts);
+
+  // pocet satelitov (plugin gps_status; ak MAVROS temu nema, ostane -1 = nezname)
+  gps_raw_sub_ = node_.create_subscription<mavros_msgs::msg::GPSRAW>(
+    "/mavros/gpsstatus/gps1/raw", qos,
+    [this](const mavros_msgs::msg::GPSRAW & m) {
+      std::lock_guard<std::mutex> lk(mtx_);
+      st_.satellites = m.satellites_visible;
+    }, opts);
+
+  rel_alt_sub_ = node_.create_subscription<std_msgs::msg::Float64>(
+    "/mavros/global_position/rel_alt", qos,
+    [this](const std_msgs::msg::Float64 & m) {
+      std::lock_guard<std::mutex> lk(mtx_);
+      st_.has_rel_alt = true;
+      st_.rel_alt = m.data;
+    }, opts);
+
+  compass_sub_ = node_.create_subscription<std_msgs::msg::Float64>(
+    "/mavros/global_position/compass_hdg", qos,
+    [this](const std_msgs::msg::Float64 & m) {
+      std::lock_guard<std::mutex> lk(mtx_);
+      st_.has_compass = true;
+      st_.compass_hdg_deg = m.data;
+    }, opts);
+
+  home_sub_ = node_.create_subscription<mavros_msgs::msg::HomePosition>(
+    "/mavros/home_position/home", qos,
+    [this](const mavros_msgs::msg::HomePosition & m) {
+      std::lock_guard<std::mutex> lk(mtx_);
+      st_.has_home = true;
+      st_.home = {m.geo.latitude, m.geo.longitude, m.geo.altitude};
+    }, opts);
+
   sp_pub_ = node_.create_publisher<PositionTarget>("/mavros/setpoint_raw/local", 10);
 
   mode_cli_ = makeClient<mavros_msgs::srv::SetMode>(node_, "/mavros/set_mode", service_group_);

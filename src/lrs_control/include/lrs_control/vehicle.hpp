@@ -1,6 +1,7 @@
 #pragma once
 #include <string>
 
+#include "lrs_control/geo.hpp"
 #include "lrs_planning/types.hpp"
 
 namespace lrs_control
@@ -18,7 +19,40 @@ struct VehicleState
   Vec3 pos{};        // map frame [m]
   Vec3 vel{};        // [m/s]
   double yaw{0.0};   // ENU [rad]
+
+  // --- GPS, home, kompas (A1.3; indoor sa nepouziva) ---------------------
+  bool has_gps{false};          // prisla aspon jedna sprava NavSatFix
+  int gps_status{-1};           // NavSatFix.status: -1 bez fixu, 0 fix, 1 SBAS, 2 GBAS
+  int satellites{-1};           // pocet satelitov, -1 = nezname (tema gpsstatus nie je)
+  double h_acc{-1.0};           // odhad horizontalnej presnosti [m] z kovariancie, -1 = nezname
+  LatLonAlt gps{};              // lat/lon/alt z /mavros/global_position/global
+  bool has_rel_alt{false};
+  double rel_alt{0.0};          // vyska nad home [m] z /mavros/global_position/rel_alt
+  bool has_compass{false};
+  double compass_hdg_deg{0.0};  // kompas: 0 = sever, v smere hodin [deg]
+  bool has_home{false};
+  LatLonAlt home{};             // z /mavros/home_position/home
 };
+
+// Je GPS pouzitelne na vzlet? Ak nie, `why` povie preco.
+//  - fix aspon STATUS_FIX (0)
+//  - satelity >= min_sats (ak ich MAVROS publikuje)
+//  - horizontalna presnost <= max_h_acc (ak je kovariancia znama)
+inline bool gpsReady(const VehicleState & st, int min_sats, double max_h_acc, std::string & why)
+{
+  if (!st.has_gps) {why = "ziadna sprava z /mavros/global_position/global"; return false;}
+  if (st.gps_status < 0) {why = "GPS bez fixu (status " + std::to_string(st.gps_status) + ")"; return false;}
+  if (st.satellites >= 0 && st.satellites < min_sats) {
+    why = "malo satelitov: " + std::to_string(st.satellites) + " < " + std::to_string(min_sats);
+    return false;
+  }
+  if (st.h_acc >= 0.0 && st.h_acc > max_h_acc) {
+    why = "nizka presnost: " + std::to_string(st.h_acc) + " m > " + std::to_string(max_h_acc) + " m";
+    return false;
+  }
+  why = "OK";
+  return true;
+}
 
 enum class RequestStatus { None, Pending, Ok, Failed };
 
