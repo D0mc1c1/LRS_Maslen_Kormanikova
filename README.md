@@ -55,3 +55,15 @@ ros2 run lrs_control geo_test      # prevod LLA <-> ENU a kompasu, bez ROS
 ros2 run lrs_control gps_info      # 1 Hz: lat/lon/alt, ENU od home, local position, kurz
 ```
 
+
+### Časť 2: vzlet, stabilné držanie, pristátie
+
+Stavy: `WAIT_CONNECTION → WAIT_GPS → WAIT_ORIGIN → SET_MODE → ARM → TAKEOFF → HOLD → LAND → DONE`
+(+ `ABORT`). Bez použiteľného GPS dron **nearmuje**. Ak pilot prepne mód z RC, program
+prestane posielať setpointy a nič neprikazuje (nebojuje s pilotom).
+
+```bash
+ros2 run lrs_control outdoor_sim normal    # offline test, aj: nohome nogps rc abort
+ros2 run lrs_control outdoor_mission --ros-args --params-file src/lrs_control/config/outdoor.yaml
+ros2 service call /outdoor_mission/abort std_srvs/srv/Trigger    # núdzové pristátie
+```

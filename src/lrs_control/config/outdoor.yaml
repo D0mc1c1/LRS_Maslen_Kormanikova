@@ -1,0 +1,28 @@
+# Parametre outdoor misie (A1.3). Vsetko sa da prepisat cez -p nazov:=hodnota.
+# Ramec: MAVROS local ENU (x = vychod, y = sever, z = hore), ciele relativne k miestu vzletu.
+/**:
+  ros__parameters:
+    altitude: 5.0                     # [m] letova vyska nad miestom vzletu
+
+    # GPS pred vzletom (inak NEARMUJE)
+    min_satellites: 6                 # kontroluje sa len ak MAVROS posiela pocet satelitov
+    max_h_acc: 2.0                    # [m] max. horizontalna chyba z kovariancie NavSatFix
+    gps_settle_time: 3.0              # [s] GPS musi byt OK nepretrzite
+    home_wait: 10.0                   # [s] ak home nepride, pociatok = prvy platny fix
+
+    # vzlet a stabilne drzanie
+    takeoff_tol: 0.20                 # [m] vzlet hotovy pri vyske >= altitude - takeoff_tol
+    hold_tol: 0.30                    # [m] odchylka od bodu nad miestom vzletu
+    hold_v: 0.20                      # [m/s] rychlost
+    hold_time: 5.0                    # [s] tolko nepretrzite stabilne -> dalsi krok
+
+    # poziadavky a timeouty [s]
+    request_retry: 3.0
+    mode_timeout: 20.0
+    arm_timeout: 60.0
+    takeoff_timeout: 40.0
+    hold_timeout: 60.0
+    land_timeout: 90.0
+
+    setpoint_rate: 20.0               # [Hz] riadiaci timer = FSM + setpoint
+    status_period: 2.0                # [s] vypis stavu

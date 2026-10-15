@@ -1,10 +1,6 @@
 // mission_sim <mission.csv>
 //
-// Offline test stavoveho automatu BEZ ROS a bez Gazeba. SimVehicle je hruby
-// kinematicky model drona, ktory sa sprava ako ArduPilot v podstatnych veciach:
-//  - arm len v GUIDED, takeoff len ked je armnuty
-//  - pozicny setpoint je latched, rychlost a zrychlenie su obmedzene
-//  - LAND: klesa a po dosadnuti sa SAM disarmne (presne ako ArduPilot)
+// Offline test stavoveho automatu BEZ ROS a bez Gazeba (simulovany dron: sim_vehicle.hpp).
 // SIM_DETOUR=1 mission_sim ... -> namiesto priamok cesta so 4 medzibodmi (ako z A*)
 // SIM_MAP=<map.pcd> mission_sim ... -> skutocny A* z A1.1
 // Pouzitie: rychlo overit logiku (poradie taskov, landtakeoff, yaw) pred letom.
@@ -19,110 +15,11 @@
 
 #include "lrs_control/geometry.hpp"
 #include "lrs_control/mission_executor.hpp"
+#include "sim_vehicle.hpp"
 #include "lrs_planning/astar_planner.hpp"
 #include "lrs_planning/planner.hpp"
 
 using namespace lrs_control;
-
-class SimVehicle : public Vehicle
-{
-public:
-  explicit SimVehicle(const Vec3 & spawn) {s_.pos = spawn; s_.mode = "STABILIZE";}
-
-  VehicleState state() const override {return s_;}
-
-  void requestMode(const std::string & m) override {pend("mode", [this, m] {s_.mode = m; return true;});}
-  void requestArm(bool a) override
-  {
-    pend("arm", [this, a] {
-        if (s_.mode != "GUIDED") {return false;}
-        s_.armed = a;
-        armed_t_ = t_;
-        return true;
-      });
-  }
-  void requestTakeoff(double z) override
-  {
-    pend("takeoff", [this, z] {
-        if (!s_.armed || s_.mode != "GUIDED" || airborne_) {return false;}
-        target_ = {s_.pos.x, s_.pos.y, z};
-        airborne_ = true;
-        return true;
-      });
-  }
-  void requestLand() override {pend("land", [this] {s_.mode = "LAND"; return true;});}
-  RequestStatus requestStatus() const override {return status_;}
-
-  void sendPositionTarget(const Vec3 & p, double yaw) override
-  {
-    if (s_.mode == "GUIDED" && s_.armed && airborne_) {
-      target_ = p;
-      yaw_target_ = yaw;
-    }
-    ++setpoints_;
-  }
-
-  void step(double dt)
-  {
-    t_ += dt;
-    s_.connected = t_ > 0.5;
-    s_.has_pose = t_ > 0.5;
-    if (pending_ && t_ >= pending_t_) {   // odpoved sluzby po 0.2 s
-      status_ = pending_fn_() ? RequestStatus::Ok : RequestStatus::Failed;
-      pending_ = false;
-    }
-    // ArduPilot: armnuty na zemi bez vzletu -> po 10 s disarm
-    if (s_.armed && !airborne_ && t_ - armed_t_ > 10.0) {s_.armed = false;}
-
-    Vec3 v_des{0, 0, 0};
-    if (s_.mode == "LAND" && s_.armed) {
-      v_des = {0, 0, -0.5};
-      if (s_.pos.z <= 0.01) {
-        s_.pos.z = 0;
-        land_t_ += dt;
-        if (land_t_ > 1.0) {s_.armed = false; airborne_ = false; land_t_ = 0;}
-      }
-    } else if (s_.mode == "GUIDED" && airborne_) {
-      // P regulator polohy s obmedzenim rychlosti (vmax 1.5 m/s)
-      const double k = 1.2, vmax = 1.5;
-      v_des = {k * (target_.x - s_.pos.x), k * (target_.y - s_.pos.y), k * (target_.z - s_.pos.z)};
-      const double n = norm(v_des);
-      if (n > vmax) {v_des = {v_des.x * vmax / n, v_des.y * vmax / n, v_des.z * vmax / n};}
-      // yaw rychlostou max 60 deg/s
-      const double e = angleDiff(yaw_target_, s_.yaw);
-      const double step = deg2rad(60) * dt;
-      s_.yaw = wrapPi(s_.yaw + std::clamp(e, -step, step));
-    }
-    // obmedzenie zrychlenia 2 m/s^2
-    const double amax = 2.0 * dt;
-    auto lim = [&](double v, double d) {return v + std::clamp(d - v, -amax, amax);};
-    s_.vel = {lim(s_.vel.x, v_des.x), lim(s_.vel.y, v_des.y), lim(s_.vel.z, v_des.z)};
-    s_.pos = {s_.pos.x + s_.vel.x * dt, s_.pos.y + s_.vel.y * dt,
-      std::max(0.0, s_.pos.z + s_.vel.z * dt)};
-  }
-
-  long setpoints() const {return setpoints_;}
-  double t() const {return t_;}
-
-private:
-  template<class F>
-  void pend(const char *, F fn)
-  {
-    pending_ = true;
-    pending_t_ = t_ + 0.2;
-    pending_fn_ = fn;
-    status_ = RequestStatus::Pending;
-  }
-
-  VehicleState s_;
-  double t_{0}, armed_t_{0}, land_t_{0}, pending_t_{0};
-  bool airborne_{false}, pending_{false};
-  std::function<bool()> pending_fn_;
-  RequestStatus status_{RequestStatus::None};
-  Vec3 target_{};
-  double yaw_target_{0};
-  long setpoints_{0};
-};
 
 // Napodobni vystup A*: medzi start a goal vlozi 4 medzibody s bocnym ofsetom.
 // Overuje, ze cez medzibody dron preleti bez zastavenia.
