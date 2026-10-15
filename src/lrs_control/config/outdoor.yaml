@@ -26,3 +26,27 @@
 
     setpoint_rate: 20.0               # [Hz] riadiaci timer = FSM + setpoint
     status_period: 2.0                # [s] vypis stavu
+
+    # --- A1.3 cast 3: stvorec s natocenim na POI ---------------------------------
+    # POI = bod zaujmu na zemi, stred stvorca aj osmicky (cast 4).
+    # poi_lat + poi_lon (oba nenulove) -> POI z lat/lon, inak posun od miesta vzletu.
+    # Posun N 5 m: miesto vzletu je 2.5 m mimo stvorca, vzlet a pristatie nie su pod trasou.
+    # Geofence: max. |POI| + S/sqrt(2) = 5 + 3.54 = 8.54 m od miesta vzletu, vyska 5 m.
+    poi_lat: 0.0                      # [deg]
+    poi_lon: 0.0                      # [deg]
+    poi_east: 0.0                     # [m] od miesta vzletu
+    poi_north: 5.0                    # [m] od miesta vzletu
+    square_side: 5.0                  # [m] zadanie: S = 5 m
+    # [m/s] na stvorci: pri strane 2.5 m od POI sa smer na POI meni rychlostou
+    # v / 2.5 = 23 deg/s pri 1 m/s -> zvladnutelne, chyba natocenia par stupnov
+    speed: 1.0
+    accel: 0.5                        # [m/s^2] rozbeh a brzdenie na kazdom useku
+    corner_tol: 0.30                  # [m] roh dosiahnuty
+    leg_timeout_extra: 20.0           # [s] rezerva k casu useku
+    poi_yaw_source: "position"        # smer na POI zo skutocnej polohy ("position") alebo setpointu
+    poi_min_dist: 0.5                 # [m] blizsie k POI sa smer nepocita
+    align_tol_deg: 5.0                # pred stvorcom natocit nos na POI s presnostou
+    align_time: 1.0                   # [s]
+    velocity_ff: true                 # rychlost trajektorie ako feedforward do setpointu
+    yaw_rate_ff: true                 # rychlost otacania ako feedforward (ArduCopter 4.1+)
+    geofence_radius: 15.0             # [m] misia dalej od miesta vzletu sa NESPUSTI

@@ -4,7 +4,8 @@
 //     --params-file src/lrs_control/config/outdoor.yaml
 //   (v terminali na jeden riadok alebo s '\' na konci riadkov)
 //
-// Cast 2: GPS -> home -> GUIDED -> arm -> vzlet na `altitude` -> stabilne drzanie -> LAND.
+// GPS -> home -> GUIDED -> arm -> vzlet na `altitude` -> drzanie -> natocenie na POI
+// -> stvorec okolo POI (nos stale na POI) -> navrat nad miesto vzletu -> LAND.
 // Ramec: MAVROS local ENU bez transformacie (FrameTransform{} = identita).
 //
 // Vlakna rovnako ako indoor_mission:
@@ -46,6 +47,25 @@ public:
     p.hold_tol = declare_parameter("hold_tol", p.hold_tol);
     p.hold_v = declare_parameter("hold_v", p.hold_v);
     p.hold_time = declare_parameter("hold_time", p.hold_time);
+
+    // POI: ak je zadane poi_lat aj poi_lon (nie 0), pouzije sa lat/lon, inak posun
+    p.poi_lat = declare_parameter("poi_lat", 0.0);
+    p.poi_lon = declare_parameter("poi_lon", 0.0);
+    p.poi_use_latlon = p.poi_lat != 0.0 && p.poi_lon != 0.0;
+    p.poi_east = declare_parameter("poi_east", p.poi_east);
+    p.poi_north = declare_parameter("poi_north", p.poi_north);
+    p.square_side = declare_parameter("square_side", p.square_side);
+    p.speed = declare_parameter("speed", p.speed);
+    p.accel = declare_parameter("accel", p.accel);
+    p.corner_tol = declare_parameter("corner_tol", p.corner_tol);
+    p.leg_timeout_extra = declare_parameter("leg_timeout_extra", p.leg_timeout_extra);
+    const auto yaw_src = declare_parameter<std::string>("poi_yaw_source", "position");
+    p.poi_min_dist = declare_parameter("poi_min_dist", p.poi_min_dist);
+    p.align_tol_deg = declare_parameter("align_tol_deg", p.align_tol_deg);
+    p.align_time = declare_parameter("align_time", p.align_time);
+    p.velocity_ff = declare_parameter("velocity_ff", p.velocity_ff);
+    p.yaw_rate_ff = declare_parameter("yaw_rate_ff", p.yaw_rate_ff);
+    p.geofence_radius = declare_parameter("geofence_radius", p.geofence_radius);
     p.request_retry = declare_parameter("request_retry", p.request_retry);
     p.mode_timeout = declare_parameter("mode_timeout", p.mode_timeout);
     p.arm_timeout = declare_parameter("arm_timeout", p.arm_timeout);
@@ -55,6 +75,13 @@ public:
 
     if (p.altitude < 1.0 || p.altitude > 30.0) {
       throw std::runtime_error("altitude mimo rozsahu 1..30 m");
+    }
+    if (yaw_src != "position" && yaw_src != "setpoint") {
+      throw std::runtime_error("poi_yaw_source musi byt 'position' alebo 'setpoint'");
+    }
+    p.poi_yaw_from_setpoint = yaw_src == "setpoint";
+    if (p.speed <= 0.0 || p.speed > 3.0 || p.accel <= 0.0) {
+      throw std::runtime_error("speed musi byt v (0, 3] m/s a accel > 0");
     }
 
     // outdoor: pracujeme priamo v MAVROS local ENU
@@ -88,8 +115,10 @@ public:
 #endif
       control_group_);
 
-    RCLCPP_INFO(get_logger(), "outdoor misia: vzlet na %.1f m, drzanie %.0f s, %.0f Hz",
-      p.altitude, p.hold_time, rate);
+    RCLCPP_INFO(get_logger(), "outdoor misia: vyska %.1f m, stvorec %.1f m, %.1f m/s, POI %s, "
+      "yaw na POI zo %s, feedforward v=%d yaw_rate=%d, %.0f Hz",
+      p.altitude, p.square_side, p.speed, p.poi_use_latlon ? "lat/lon" : "posun",
+      yaw_src.c_str(), p.velocity_ff, p.yaw_rate_ff, rate);
   }
 
 private:
@@ -109,19 +138,22 @@ private:
     }
   }
 
-  // stav, poloha od miesta vzletu, rel_alt, lat/lon, kurz
+  // stav, poloha od miesta vzletu, rel_alt, lat/lon, kurz v oboch konvenciach, chyba na POI
   void printStatus()
   {
     const auto st = vehicle_->state();
     const auto & l = executor_->launch();
-    char b[256];
+    char b[320];
     std::snprintf(b, sizeof(b),
       "[%s] %s armed=%d | od vzletu E %.2f N %.2f U %.2f | rel_alt %s | "
-      "lat %.7f lon %.7f | kompas %.0f deg",
+      "lat %.7f lon %.7f | kompas %.0f deg, ENU yaw %.0f deg%s",
       OutdoorExecutor::name(executor_->state()), st.mode.c_str(), st.armed ? 1 : 0,
       st.pos.x - l.x, st.pos.y - l.y, st.pos.z - l.z,
       st.has_rel_alt ? (std::to_string(st.rel_alt).substr(0, 5) + " m").c_str() : "?",
-      st.gps.lat_deg, st.gps.lon_deg, st.compass_hdg_deg);
+      st.gps.lat_deg, st.gps.lon_deg, st.compass_hdg_deg, lrs_control::rad2deg(st.yaw),
+      executor_->poiErrDeg() >= 0.0 ?
+      (" | chyba na POI " + std::to_string(executor_->poiErrDeg()).substr(0, 4) + " deg").c_str() :
+      "");
     RCLCPP_INFO(get_logger(), "%s", b);
   }
 

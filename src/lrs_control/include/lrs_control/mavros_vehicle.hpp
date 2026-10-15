@@ -36,10 +36,12 @@ public:
   void requestLand() override;
   RequestStatus requestStatus() const override;
   void sendPositionTarget(const Vec3 & p_map, double yaw) override;
+  void sendTrajectorySetpoint(const TrajectorySetpoint & sp) override;
 
 private:
   // Asynchronne volanie sluzby. Odpoved spracuje callback v service_group_,
   // takze riadiaci timer NIKDY neblokuje cakanim na sluzbu.
+
   template<class SrvT, class OkFn>
   void call(
     const typename rclcpp::Client<SrvT>::SharedPtr & client,

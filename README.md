@@ -67,3 +67,16 @@ ros2 run lrs_control outdoor_sim normal    # offline test, aj: nohome nogps rc a
 ros2 run lrs_control outdoor_mission --ros-args --params-file src/lrs_control/config/outdoor.yaml
 ros2 service call /outdoor_mission/abort std_srvs/srv/Trigger    # núdzové pristátie
 ```
+
+### Časť 3: štvorec s natáčaním na POI
+
+Po vzlete sa dron natočí na POI, preletí na W1 a obletí štvorec W1→W2→W3→W4→W1 (S = 5 m,
+stred = POI). Smer na POI sa počíta **každý tick** zo skutočnej polohy, len vodorovne
+(yaw, nie gimbal). Úseky majú lichobežníkový profil rýchlosti; do setpointu ide aj rýchlosť
+a rýchlosť otáčania ako feedforward. Na konci sa vráti nad miesto vzletu a pristane.
+
+```bash
+ros2 run lrs_control outdoor_sim normal    # aj: noff setpoint latlon nohome nogps geofence rc abort
+ros2 run lrs_control outdoor_mission --ros-args --params-file src/lrs_control/config/outdoor.yaml
+# POI cez lat/lon:  ... -p poi_lat:=48.1514867 -p poi_lon:=17.0737554
+```

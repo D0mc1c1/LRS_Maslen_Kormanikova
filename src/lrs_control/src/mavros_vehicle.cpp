@@ -203,21 +203,42 @@ void MavrosVehicle::requestLand()
 
 void MavrosVehicle::sendPositionTarget(const Vec3 & p_map, double yaw)
 {
+  TrajectorySetpoint sp;
+  sp.p = p_map;
+  sp.yaw = yaw;
+  sendTrajectorySetpoint(sp);
+}
+
+void MavrosVehicle::sendTrajectorySetpoint(const TrajectorySetpoint & t)
+{
   PositionTarget sp;
   sp.header.stamp = node_.now();
   sp.header.frame_id = "map";
   // MAVROS cakava ENU data s FRAME_LOCAL_NED a prevod do NED spravi sam
   sp.coordinate_frame = PositionTarget::FRAME_LOCAL_NED;
-  // pouzit len poziciu + yaw; rychlost, zrychlenie a yaw_rate ignorovat
-  sp.type_mask = PositionTarget::IGNORE_VX | PositionTarget::IGNORE_VY |
-    PositionTarget::IGNORE_VZ | PositionTarget::IGNORE_AFX | PositionTarget::IGNORE_AFY |
-    PositionTarget::IGNORE_AFZ | PositionTarget::IGNORE_YAW_RATE;
+  // vzdy poloha + yaw; rychlost a yaw_rate len ak su zadane; zrychlenie nikdy
+  sp.type_mask = PositionTarget::IGNORE_AFX | PositionTarget::IGNORE_AFY |
+    PositionTarget::IGNORE_AFZ;
   // map -> local
-  const Vec3 l = tf_.toLocal(p_map);
+  const Vec3 l = tf_.toLocal(t.p);
   sp.position.x = l.x;
   sp.position.y = l.y;
   sp.position.z = l.z;
-  sp.yaw = static_cast<float>(tf_.yawToLocal(yaw));
+  if (t.v) {
+    const Vec3 vl = tf_.dirToLocal(*t.v);
+    sp.velocity.x = vl.x;
+    sp.velocity.y = vl.y;
+    sp.velocity.z = vl.z;
+  } else {
+    sp.type_mask |= PositionTarget::IGNORE_VX | PositionTarget::IGNORE_VY |
+      PositionTarget::IGNORE_VZ;
+  }
+  sp.yaw = static_cast<float>(tf_.yawToLocal(t.yaw));
+  if (t.yaw_rate) {
+    sp.yaw_rate = static_cast<float>(*t.yaw_rate);  // ENU, MAVROS otoci znamienko do NED
+  } else {
+    sp.type_mask |= PositionTarget::IGNORE_YAW_RATE;
+  }
   sp_pub_->publish(sp);
 }
 

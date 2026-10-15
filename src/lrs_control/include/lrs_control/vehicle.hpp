@@ -1,4 +1,5 @@
 #pragma once
+#include <optional>
 #include <string>
 
 #include "lrs_control/geo.hpp"
@@ -56,6 +57,17 @@ inline bool gpsReady(const VehicleState & st, int min_sats, double max_h_acc, st
 
 enum class RequestStatus { None, Pending, Ok, Failed };
 
+// A1.3: setpoint casovej trajektorie. Rychlost a yaw_rate su FEEDFORWARD:
+// ArduPilot ide s pohybujucim sa setpointom, nie za nim s oneskorenim.
+// (yaw + yaw_rate naraz = uhol s feedforward, ArduCopter 4.1+)
+struct TrajectorySetpoint
+{
+  Vec3 p{};                         // poloha (map frame = outdoor local ENU)
+  double yaw{0.0};                  // [rad] ENU
+  std::optional<Vec3> v;            // [m/s]
+  std::optional<double> yaw_rate;   // [rad/s] ENU, kladny = proti smeru hodinovych ruciciek
+};
+
 // Abstrakcia nad dronom. Stavovy automat vidi len toto rozhranie:
 //  - MavrosVehicle  = skutocny dron cez MAVROS (ROS 2)
 //  - SimVehicle     = jednoduchy model v mission_sim (offline test bez ROS)
@@ -78,6 +90,13 @@ public:
 
   // Pozicny setpoint (map frame) + yaw (ENU, rad). Vola sa kazdy tick.
   virtual void sendPositionTarget(const Vec3 & p_map, double yaw) = 0;
+
+  // A1.3: setpoint casovej trajektorie (poloha + yaw, volitelne feedforward).
+  // Bez implementacie sa posle len poloha + yaw.
+  virtual void sendTrajectorySetpoint(const TrajectorySetpoint & sp)
+  {
+    sendPositionTarget(sp.p, sp.yaw);
+  }
 };
 
 }  // namespace lrs_control

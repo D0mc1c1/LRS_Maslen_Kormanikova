@@ -5,11 +5,14 @@
 // Vsetky ciele misie su relativne k miestu vzletu (launch), nic nie je
 // absolutna suradnica. Geodeticky pociatok (home alebo prvy fix) sluzi na
 // prevod lat/lon <-> ENU (POI zadane ako lat/lon, vypisy polohy).
+#include <cmath>
 #include <functional>
 #include <optional>
 #include <string>
+#include <vector>
 
 #include "lrs_control/geo.hpp"
+#include "lrs_control/trajectory.hpp"
 #include "lrs_control/vehicle.hpp"
 
 namespace lrs_control
@@ -30,6 +33,29 @@ struct OutdoorParams
   double hold_tol{0.3};          // [m] max. odchylka od bodu pri drzani
   double hold_v{0.2};            // [m/s] max. rychlost pri drzani
   double hold_time{5.0};         // [s] tolko musi drzat stabilne
+
+  // POI (bod zaujmu na zemi, stred stvorca). Bud lat/lon, alebo posun od miesta vzletu.
+  bool poi_use_latlon{false};
+  double poi_lat{0.0}, poi_lon{0.0};      // [deg] ak poi_use_latlon
+  double poi_east{0.0}, poi_north{5.0};   // [m] inak: posun od miesta vzletu (ENU)
+
+  // stvorec okolo POI: W1 SZ, W2 SV, W3 JV, W4 JZ, spat W1 (v smere hodinovych ruciciek)
+  double square_side{5.0};       // [m]
+  double speed{1.0};             // [m/s] max. rychlost na usekoch (stvorec, presuny)
+  double accel{0.5};             // [m/s^2] zrychlenie / spomalenie na usekoch
+  double corner_tol{0.3};        // [m] roh dosiahnuty, ked je dron blizsie
+  double leg_timeout_extra{20.0};// [s] usek moze trvat o tolko dlhsie ako podla profilu
+  bool poi_yaw_from_setpoint{false}; // smer na POI z: false = skutocnej polohy, true = setpointu
+  double poi_min_dist{0.5};      // [m] blizsie k POI sa smer nepocita (nedefinovany)
+  double align_tol_deg{5.0};     // [deg] pred stvorcom natocit na POI s touto presnostou
+  double align_time{1.0};        // [s] ... nepretrzite tolko
+
+  // feedforward do setpointu
+  bool velocity_ff{true};        // rychlost trajektorie
+  bool yaw_rate_ff{true};        // rychlost otacania (ArduCopter 4.1+)
+
+  // bezpecnost: max. vodorovna vzdialenost misie od miesta vzletu
+  double geofence_radius{15.0};  // [m]
 
   // poziadavky a timeouty [s]
   double request_retry{3.0};
@@ -52,6 +78,9 @@ public:
     ARM,
     TAKEOFF,          // cmd/takeoff na `altitude` nad launch, overene vyskou
     HOLD,             // drzi bod nad launch, kym nie je stabilny hold_time
+    POI_ALIGN,        // na mieste natocit nos na POI
+    SQUARE,           // presun na W1, potom W1-W2-W3-W4-W1, nos stale na POI
+    RETURN,           // navrat nad miesto vzletu
     LAND,             // pristatie na mieste, cakanie na disarm
     DONE,
     ABORT
@@ -75,6 +104,24 @@ public:
   bool hasOrigin() const {return ltp_.valid();}
   const LocalTangentPlane & origin() const {return ltp_;}
   const Vec3 & launch() const {return launch_;}
+  const Vec3 & poi() const {return poi_;}
+
+  // prevod geodeticke <-> MAVROS local (po WAIT_ORIGIN)
+  Vec3 llaToLocal(const LatLonAlt & g) const;
+  LatLonAlt localToLla(const Vec3 & p) const;
+
+  // chyba natocenia na POI pocas stvorca (W1 -> ... -> W1), bez presunu na W1
+  struct PoiStats
+  {
+    double max_deg{0.0};
+    double sum_sq{0.0};
+    long n{0};
+    double rmsDeg() const {return n > 0 ? std::sqrt(sum_sq / n) : 0.0;}
+  };
+  const PoiStats & poiStats() const {return poi_stats_;}
+  // posledna chyba natocenia na POI [deg], < 0 ak sa prave nepocita
+  double poiErrDeg() const {return poi_err_deg_;}
+  int cornersReached() const {return corners_reached_;}
 
 private:
   void enter(State s, const std::string & why);
@@ -83,6 +130,14 @@ private:
   bool requestDue(double now) const;
   void markRequestSent(double now);
   void send(const Vec3 & p, double yaw);
+  // setpoint trajektorie: poloha + rychlost + yaw + yaw_rate (feedforward podla parametrov)
+  void sendTraj(const Vec3 & p, const Vec3 & v, double yaw, double yaw_rate);
+  // smer na POI z bodu p, ak je p prilis blizko POI, vrati `fallback`
+  double poiYaw(const Vec3 & p, double fallback) const;
+  // rychlost zmeny smeru na POI pri pohybe bodu p rychlostou v [rad/s]
+  double poiYawRate(const Vec3 & p, const Vec3 & v) const;
+  bool setupMissionGeometry(const VehicleState & st);
+  void startLeg(std::size_t i, const Vec3 & from);
   double heightAboveLaunch(const VehicleState & st) const;
   // land = true: po preruseni poziadaj o LAND; false: len prestan riadit (pilot prevzal)
   void doAbort(const std::string & why, bool land);
@@ -95,6 +150,9 @@ private:
   void onArm(const VehicleState & st, double now);
   void onTakeoff(const VehicleState & st, double now);
   void onHold(const VehicleState & st, double now);
+  void onPoiAlign(const VehicleState & st, double now);
+  void onSquare(const VehicleState & st, double now);
+  void onReturn(const VehicleState & st, double now);
   void onLand(const VehicleState & st, double now);
   void onAbort(const VehicleState & st, double now);
 
@@ -116,6 +174,17 @@ private:
   double yaw_sp_{0.0};
   Vec3 last_sp_{};
   bool sent_this_tick_{false};
+
+  Vec3 geo_offset_{};               // local = ltp_.toEnu(lla) + geo_offset_
+  Vec3 poi_{};                      // POI v local ENU (vo vyske miesta vzletu = na zemi)
+  std::vector<Vec3> square_;        // W1, W2, W3, W4, W1 (vo vyske letu)
+  std::size_t leg_i_{0};            // index ciela v square_ (0 = presun na W1)
+  StraightLeg leg_;
+  double leg_t0_{0.0};
+  double leg_err_max_{0.0};
+  PoiStats poi_stats_;
+  double poi_err_deg_{-1.0};
+  int corners_reached_{0};
 
   double req_sent_t_{-1.0};
   int req_attempts_{0};

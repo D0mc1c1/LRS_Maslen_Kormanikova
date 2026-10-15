@@ -77,6 +77,11 @@ struct FrameTransform
     const double dx = l.x - t.x, dy = l.y - t.y;
     return {c * dx + s * dy, -s * dx + c * dy, l.z - t.z};
   }
+  Vec3 dirToLocal(const Vec3 & v) const   // vektor (rychlost), bez posunu
+  {
+    const double c = std::cos(yaw), s = std::sin(yaw);
+    return {c * v.x - s * v.y, s * v.x + c * v.y, v.z};
+  }
   Vec3 dirToMap(const Vec3 & v) const   // vektor (rychlost), bez posunu
   {
     const double c = std::cos(yaw), s = std::sin(yaw);

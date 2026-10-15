@@ -1,5 +1,6 @@
 #include "lrs_control/outdoor_executor.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <utility>
@@ -23,6 +24,11 @@ std::string pt(const Vec3 & p)
   std::snprintf(b, sizeof(b), "(%.2f, %.2f, %.2f)", p.x, p.y, p.z);
   return b;
 }
+// nazov ciela v zozname square_ (W1, W2, W3, W4, W1)
+std::string wpName(std::size_t i)
+{
+  return "W" + std::to_string(i % 4 + 1);
+}
 }  // namespace
 
 OutdoorExecutor::OutdoorExecutor(Vehicle & vehicle, OutdoorParams params, Logger log)
@@ -40,6 +46,9 @@ const char * OutdoorExecutor::name(State s)
     case State::ARM: return "ARM";
     case State::TAKEOFF: return "TAKEOFF";
     case State::HOLD: return "HOLD";
+    case State::POI_ALIGN: return "POI_ALIGN";
+    case State::SQUARE: return "SQUARE";
+    case State::RETURN: return "RETURN";
     case State::LAND: return "LAND";
     case State::DONE: return "DONE";
     case State::ABORT: return "ABORT";
@@ -79,6 +88,9 @@ void OutdoorExecutor::tick(double now)
     case State::ARM: onArm(st, now); break;
     case State::TAKEOFF: onTakeoff(st, now); break;
     case State::HOLD: onHold(st, now); break;
+    case State::POI_ALIGN: onPoiAlign(st, now); break;
+    case State::SQUARE: onSquare(st, now); break;
+    case State::RETURN: onReturn(st, now); break;
     case State::LAND: onLand(st, now); break;
     case State::DONE: break;
     case State::ABORT: onAbort(st, now); break;
@@ -121,7 +133,8 @@ void OutdoorExecutor::doAbort(const std::string & why, bool land)
 // TAKEOFF sem nepatri: pocas vzletu ArduPilot ide na ciel z cmd/takeoff.
 bool OutdoorExecutor::airborneState() const
 {
-  return state_ == State::HOLD;
+  return state_ == State::HOLD || state_ == State::POI_ALIGN || state_ == State::SQUARE ||
+         state_ == State::RETURN;
 }
 
 void OutdoorExecutor::send(const Vec3 & p, double yaw)
@@ -129,6 +142,105 @@ void OutdoorExecutor::send(const Vec3 & p, double yaw)
   vehicle_.sendPositionTarget(p, yaw);
   last_sp_ = p;
   sent_this_tick_ = true;
+}
+
+void OutdoorExecutor::sendTraj(const Vec3 & p, const Vec3 & v, double yaw, double yaw_rate)
+{
+  TrajectorySetpoint sp;
+  sp.p = p;
+  sp.yaw = yaw;
+  if (p_.velocity_ff) {sp.v = v;}
+  if (p_.yaw_rate_ff) {sp.yaw_rate = yaw_rate;}
+  vehicle_.sendTrajectorySetpoint(sp);
+  last_sp_ = p;
+  yaw_sp_ = yaw;
+  sent_this_tick_ = true;
+}
+
+double OutdoorExecutor::poiYaw(const Vec3 & p, double fallback) const
+{
+  return distXY(p, poi_) < p_.poi_min_dist ? fallback : bearingXY(p, poi_);
+}
+
+// psi = atan2(dy, dx), d = POI - p, d' = -v  =>  psi' = (dy*vx - dx*vy) / |d|^2
+double OutdoorExecutor::poiYawRate(const Vec3 & p, const Vec3 & v) const
+{
+  const double dx = poi_.x - p.x, dy = poi_.y - p.y;
+  const double r2 = dx * dx + dy * dy;
+  if (r2 < p_.poi_min_dist * p_.poi_min_dist) {
+    return 0.0;
+  }
+  return (dy * v.x - dx * v.y) / r2;
+}
+
+Vec3 OutdoorExecutor::llaToLocal(const LatLonAlt & g) const
+{
+  const Vec3 e = ltp_.toEnu(g);
+  return {e.x + geo_offset_.x, e.y + geo_offset_.y, e.z + geo_offset_.z};
+}
+
+LatLonAlt OutdoorExecutor::localToLla(const Vec3 & p) const
+{
+  return ltp_.toLla({p.x - geo_offset_.x, p.y - geo_offset_.y, p.z - geo_offset_.z});
+}
+
+// POI a rohy stvorca. Volane raz vo WAIT_ORIGIN, ked je znamy pociatok aj miesto vzletu.
+bool OutdoorExecutor::setupMissionGeometry(const VehicleState & st)
+{
+  // MAVROS local (EKF origin) a ENU od home (ltp_) su rovnobezne ramce, mozu byt posunute
+  const Vec3 gps_enu = ltp_.toEnu(st.gps);
+  geo_offset_ = {launch_.x - gps_enu.x, launch_.y - gps_enu.y, launch_.z - gps_enu.z};
+
+  char b[200];
+  if (p_.poi_use_latlon) {
+    poi_ = llaToLocal({p_.poi_lat, p_.poi_lon, st.gps.alt_m});
+  } else {
+    poi_ = {launch_.x + p_.poi_east, launch_.y + p_.poi_north, launch_.z};
+  }
+  poi_.z = launch_.z;   // POI je na zemi
+  const LatLonAlt poi_g = localToLla(poi_);
+  std::snprintf(b, sizeof(b), "POI lat %.7f lon %.7f = od miesta vzletu E %.2f N %.2f (%s)",
+    poi_g.lat_deg, poi_g.lon_deg, poi_.x - launch_.x, poi_.y - launch_.y,
+    p_.poi_use_latlon ? "parameter lat/lon" : "parameter posun");
+  log(LogLevel::Info, b);
+
+  // Rohy: posun +-S/2 od POI -> lat/lon (tak ako by ich zadal clovek) -> local ENU.
+  // Pouzivaju sa oba smery prevodu; vysledok je ten isty ako priamy posun v ENU.
+  const double h = p_.square_side / 2.0, z = launch_.z + p_.altitude;
+  const double off[4][2] = {{-h, h}, {h, h}, {h, -h}, {-h, -h}};   // W1 SZ, W2 SV, W3 JV, W4 JZ
+  square_.clear();
+  for (int k = 0; k < 4; ++k) {
+    const LatLonAlt g = localToLla({poi_.x + off[k][0], poi_.y + off[k][1], z});
+    Vec3 w = llaToLocal(g);
+    w.z = z;
+    square_.push_back(w);
+    std::snprintf(b, sizeof(b), "W%d lat %.7f lon %.7f -> od miesta vzletu E %.2f N %.2f, %.1f m od POI",
+      k + 1, g.lat_deg, g.lon_deg, w.x - launch_.x, w.y - launch_.y, distXY(w, poi_));
+    log(LogLevel::Info, b);
+  }
+  square_.push_back(square_[0]);   // uzavriet stvorec
+
+  double r_max = 0.0;
+  for (const auto & w : square_) {
+    r_max = std::max(r_max, distXY(w, launch_));
+  }
+  std::snprintf(b, sizeof(b), "geofence: misia max. %.2f m od miesta vzletu (limit %.1f m), "
+    "vyska %.1f m", r_max, p_.geofence_radius, p_.altitude);
+  log(r_max > p_.geofence_radius ? LogLevel::Error : LogLevel::Info, b);
+  return r_max <= p_.geofence_radius;
+}
+
+void OutdoorExecutor::startLeg(std::size_t i, const Vec3 & from)
+{
+  leg_i_ = i;
+  leg_ = StraightLeg(from, square_[i], p_.speed, p_.accel);
+  leg_t0_ = now_;
+  leg_err_max_ = 0.0;
+  char b[160];
+  std::snprintf(b, sizeof(b), "SQUARE: %s %s (%.2f m, %.1f s)%s",
+    i == 0 ? "presun na" : (wpName(i - 1) + " ->").c_str(), wpName(i).c_str(),
+    leg_.length(), leg_.duration(), i == 0 ? ", nos na POI" : "");
+  log(LogLevel::Info, b);
 }
 
 double OutdoorExecutor::heightAboveLaunch(const VehicleState & st) const
@@ -215,6 +327,7 @@ void OutdoorExecutor::onWaitOrigin(const VehicleState & st, double now)
   ltp_ = LocalTangentPlane(origin);
   launch_ = st.pos;
   yaw_sp_ = st.yaw;
+  poi_err_deg_ = -1.0;
 
   char b[200];
   std::snprintf(b, sizeof(b), "pociatok lat %.7f lon %.7f (%s)", origin.lat_deg, origin.lon_deg,
@@ -228,6 +341,10 @@ void OutdoorExecutor::onWaitOrigin(const VehicleState & st, double now)
   if (std::hypot(gps_enu.x, gps_enu.y) > 5.0) {
     log(LogLevel::Warn, "dron je " + fmt("%.1f", std::hypot(gps_enu.x, gps_enu.y)) +
       " m od pociatku (home nastaveny inde?)");
+  }
+  if (!setupMissionGeometry(st)) {
+    doAbort("misia je mimo geofence, NEVZLIETAM (skontroluj POI)", false);
+    return;
   }
   enter(State::SET_MODE, "vzlet na " + fmt("%.1f", p_.altitude) + " m nad miestom vzletu");
 }
@@ -311,8 +428,7 @@ void OutdoorExecutor::onHold(const VehicleState & st, double now)
       cond_t0_ = now;
     }
     if (now - *cond_t0_ >= p_.hold_time) {
-      // cast 2: po stabilnom drzani pristat. V casti 3 sem pride stvorec s POI.
-      enter(State::LAND, "stabilne " + fmt("%.0f s", p_.hold_time) + ", chyba " +
+      enter(State::POI_ALIGN, "stabilne " + fmt("%.0f s", p_.hold_time) + ", chyba " +
         fmt("%.2f m", err) + ", vyska " + fmt("%.2f m", heightAboveLaunch(st)));
       return;
     }
@@ -322,6 +438,105 @@ void OutdoorExecutor::onHold(const VehicleState & st, double now)
   if (inState(now) > p_.hold_timeout) {
     doAbort("dron sa neustalil za " + fmt("%.0f s", p_.hold_timeout) + " (chyba " +
       fmt("%.2f m", err) + ")", true);
+  }
+}
+
+void OutdoorExecutor::onPoiAlign(const VehicleState & st, double now)
+{
+  // smer na POI z bodu drzania; ak je dron priamo nad POI, natoci sa tak,
+  // ako to bude treba vo W1
+  const double target = poiYaw(hold_target_, poiYaw(square_[0], yaw_sp_));
+  sendTraj(hold_target_, {}, unwrapNear(target, yaw_sp_), 0.0);
+  const double err = std::abs(rad2deg(angleDiff(target, st.yaw)));
+  if (err < p_.align_tol_deg) {
+    if (!cond_t0_) {
+      cond_t0_ = now;
+    }
+    if (now - *cond_t0_ >= p_.align_time) {
+      enter(State::SQUARE, "nos na POI, chyba " + fmt("%.1f deg", err));
+      startLeg(0, hold_target_);
+      return;
+    }
+  } else {
+    cond_t0_.reset();
+  }
+  if (inState(now) > p_.hold_timeout) {
+    doAbort("natocenie na POI sa nepodarilo (chyba " + fmt("%.1f deg)", err), true);
+  }
+}
+
+void OutdoorExecutor::onSquare(const VehicleState & st, double now)
+{
+  const double t = now - leg_t0_;
+  const Vec3 p = leg_.pos(t);
+  const Vec3 v = leg_.vel(t);
+
+  // yaw na POI sa pocita KAZDY tick (nie raz na roh)
+  const Vec3 & src = p_.poi_yaw_from_setpoint ? p : st.pos;
+  const double yaw = unwrapNear(poiYaw(src, yaw_sp_), yaw_sp_);
+  sendTraj(p, v, yaw, poiYawRate(src, v));
+
+  // chyba natocenia: nos drona vs. smer zo skutocnej polohy na POI
+  poi_err_deg_ = -1.0;
+  if (distXY(st.pos, poi_) >= p_.poi_min_dist) {
+    poi_err_deg_ = std::abs(rad2deg(angleDiff(bearingXY(st.pos, poi_), st.yaw)));
+    if (leg_i_ >= 1) {   // hodnoti sa stvorec, nie presun na W1
+      leg_err_max_ = std::max(leg_err_max_, poi_err_deg_);
+      poi_stats_.max_deg = std::max(poi_stats_.max_deg, poi_err_deg_);
+      poi_stats_.sum_sq += poi_err_deg_ * poi_err_deg_;
+      ++poi_stats_.n;
+    }
+  }
+
+  const Vec3 goal = square_[leg_i_];
+  if (t >= leg_.duration() && dist(st.pos, goal) < p_.corner_tol) {
+    ++corners_reached_;
+    const LatLonAlt g = localToLla(st.pos);
+    char b[220];
+    std::snprintf(b, sizeof(b),
+      "%s dosiahnuty: lat %.7f lon %.7f, od vzletu E %.2f N %.2f U %.2f, chyba %.2f m",
+      wpName(leg_i_).c_str(), g.lat_deg, g.lon_deg, st.pos.x - launch_.x, st.pos.y - launch_.y,
+      st.pos.z - launch_.z, dist(st.pos, goal));
+    std::string msg = b;
+    if (leg_i_ >= 1) {
+      msg += ", yaw na POI max " + fmt("%.1f deg", leg_err_max_);
+    }
+    log(LogLevel::Info, msg);
+    if (leg_i_ + 1 < square_.size()) {
+      startLeg(leg_i_ + 1, goal);
+    } else {
+      std::snprintf(b, sizeof(b), "stvorec hotovy: chyba natocenia na POI max %.1f deg, "
+        "RMS %.1f deg (%ld vzoriek)", poi_stats_.max_deg, poi_stats_.rmsDeg(), poi_stats_.n);
+      log(LogLevel::Info, b);
+      enter(State::RETURN, "navrat nad miesto vzletu");
+      leg_ = StraightLeg(goal, hold_target_, p_.speed, p_.accel);
+      leg_t0_ = now;
+    }
+    return;
+  }
+  if (t > leg_.duration() + p_.leg_timeout_extra) {
+    doAbort(wpName(leg_i_) + " nedosiahnuty (chyba " + fmt("%.2f m)", dist(st.pos, goal)), true);
+  }
+}
+
+void OutdoorExecutor::onReturn(const VehicleState & st, double now)
+{
+  const double t = now - leg_t0_;
+  sendTraj(leg_.pos(t), leg_.vel(t), yaw_sp_, 0.0);
+  const double err = dist(st.pos, leg_.b);
+  if (t >= leg_.duration() && err < p_.hold_tol && norm(st.vel) < p_.hold_v) {
+    if (!cond_t0_) {
+      cond_t0_ = now;
+    }
+    if (now - *cond_t0_ >= 2.0) {
+      enter(State::LAND, "nad miestom vzletu, chyba " + fmt("%.2f m", err));
+      return;
+    }
+  } else {
+    cond_t0_.reset();
+  }
+  if (t > leg_.duration() + p_.leg_timeout_extra) {
+    doAbort("navrat nad miesto vzletu sa nepodaril (chyba " + fmt("%.2f m)", err), true);
   }
 }
 

@@ -52,6 +52,8 @@ public:
     pend("takeoff", [this, z] {
         if (!s_.armed || s_.mode != "GUIDED" || airborne_) {return false;}
         target_ = {s_.pos.x, s_.pos.y, z};
+        v_ff_ = {};
+        yaw_rate_ff_ = 0.0;
         airborne_ = true;
         return true;
       });
@@ -61,9 +63,19 @@ public:
 
   void sendPositionTarget(const Vec3 & p, double yaw) override
   {
+    TrajectorySetpoint sp;
+    sp.p = p;
+    sp.yaw = yaw;
+    sendTrajectorySetpoint(sp);
+  }
+  // rychlost a yaw_rate = feedforward, P regulator dorovnava len odchylku
+  void sendTrajectorySetpoint(const TrajectorySetpoint & sp) override
+  {
     if (s_.mode == "GUIDED" && s_.armed && airborne_) {
-      target_ = p;
-      yaw_target_ = yaw;
+      target_ = sp.p;
+      v_ff_ = sp.v.value_or(Vec3{});
+      yaw_target_ = sp.yaw;
+      yaw_rate_ff_ = sp.yaw_rate.value_or(0.0);
     }
     ++setpoints_;
   }
@@ -91,13 +103,15 @@ public:
     } else if (s_.mode == "GUIDED" && airborne_) {
       // P regulator polohy s obmedzenim rychlosti (vmax 1.5 m/s)
       const double k = 1.2, vmax = 1.5;
-      v_des = {k * (target_.x - s_.pos.x), k * (target_.y - s_.pos.y), k * (target_.z - s_.pos.z)};
+      v_des = {v_ff_.x + k * (target_.x - s_.pos.x), v_ff_.y + k * (target_.y - s_.pos.y),
+        v_ff_.z + k * (target_.z - s_.pos.z)};
       const double n = norm(v_des);
       if (n > vmax) {v_des = {v_des.x * vmax / n, v_des.y * vmax / n, v_des.z * vmax / n};}
-      // yaw rychlostou max 60 deg/s
+      // yaw: P regulator (ako ATC_ANG_YAW_P ~4) + feedforward, max 60 deg/s.
+      // Bez feedforward zaostava za otacajucim sa cielom o (rychlost otacania / 4).
       const double e = angleDiff(yaw_target_, s_.yaw);
-      const double step = deg2rad(60) * dt;
-      s_.yaw = wrapPi(s_.yaw + std::clamp(e, -step, step));
+      const double rate = std::clamp(yaw_rate_ff_ + 4.0 * e, -deg2rad(60), deg2rad(60));
+      s_.yaw = wrapPi(s_.yaw + rate * dt);
     }
     // obmedzenie zrychlenia 2 m/s^2
     const double amax = 2.0 * dt;
@@ -141,8 +155,8 @@ private:
   bool airborne_{false}, pending_{false};
   std::function<bool()> pending_fn_;
   RequestStatus status_{RequestStatus::None};
-  Vec3 target_{};
-  double yaw_target_{0};
+  Vec3 target_{}, v_ff_{};
+  double yaw_target_{0}, yaw_rate_ff_{0};
   long setpoints_{0};
   bool gps_on_{false};
   LocalTangentPlane ltp_;
