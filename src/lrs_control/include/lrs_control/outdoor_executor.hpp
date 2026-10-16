@@ -54,6 +54,15 @@ struct OutdoorParams
   bool velocity_ff{true};        // rychlost trajektorie
   bool yaw_rate_ff{true};        // rychlost otacania (ArduCopter 4.1+)
 
+  // osmicka okolo POI (casova trajektoria, timer v node = tick)
+  double fig8_amplitude{3.0};    // [m] A, zadanie: 3 m
+  double fig8_omega{0.25};       // [rad/s] max. rychlost v strede A*omega*sqrt(2) = 1.06 m/s
+  double fig8_laps{1.0};         // pocet kol (aspon 1)
+  double fig8_ramp{3.0};         // [s] plynuly rozbeh / dobeh fazy, 0 = th = omega*t
+  double fig8_rotation_deg{0.0}; // [deg] otocenie dlhej osi od vychodu (ENU, CCW)
+  double fig8_max_speed{1.5};    // [m/s] vyssia A*omega*sqrt(2) -> misia sa nespusti
+  double max_track_err{1.5};     // [m] odchylka od setpointu na osmicke -> ABORT + LAND
+
   // bezpecnost: max. vodorovna vzdialenost misie od miesta vzletu
   double geofence_radius{15.0};  // [m]
 
@@ -80,6 +89,9 @@ public:
     HOLD,             // drzi bod nad launch, kym nie je stabilny hold_time
     POI_ALIGN,        // na mieste natocit nos na POI
     SQUARE,           // presun na W1, potom W1-W2-W3-W4-W1, nos stale na POI
+    FIG8_ENTRY,       // presun z W1 do stredu osmicky (nad POI), natacanie na tangentu
+    FIG8_ALIGN,       // v strede dorovnat yaw na tangentu v t = 0
+    FIG8,             // osmicka: kazdy tick novy setpoint z rovnic, yaw = tangenta
     RETURN,           // navrat nad miesto vzletu
     LAND,             // pristatie na mieste, cakanie na disarm
     DONE,
@@ -119,6 +131,23 @@ public:
     double rmsDeg() const {return n > 0 ? std::sqrt(sum_sq / n) : 0.0;}
   };
   const PoiStats & poiStats() const {return poi_stats_;}
+
+  // osmicka: odchylka skutocnej polohy od setpointu, natocenie vs. tangenta, tvar
+  struct Fig8Stats
+  {
+    double track_max{0.0}, track_sum_sq{0.0};
+    double yaw_max_deg{0.0}, yaw_sum_sq{0.0};
+    double max_yaw_step_deg{0.0};   // najvacsi skok yaw setpointu medzi tickmi
+    double x_min{0.0}, x_max{0.0}, y_min{0.0}, y_max{0.0};   // skutocna poloha od stredu
+    long n{0};
+    bool done{false};
+    double trackRms() const {return n > 0 ? std::sqrt(track_sum_sq / n) : 0.0;}
+    double yawRmsDeg() const {return n > 0 ? std::sqrt(yaw_sum_sq / n) : 0.0;}
+  };
+  const Fig8Stats & fig8Stats() const {return fig8_stats_;}
+  const Figure8 & figure8() const {return fig8_;}
+  // posledna odchylka od osmicky [m], < 0 ak sa prave nepocita
+  double trackErr() const {return track_err_;}
   // posledna chyba natocenia na POI [deg], < 0 ak sa prave nepocita
   double poiErrDeg() const {return poi_err_deg_;}
   int cornersReached() const {return corners_reached_;}
@@ -138,6 +167,11 @@ private:
   double poiYawRate(const Vec3 & p, const Vec3 & v) const;
   bool setupMissionGeometry(const VehicleState & st);
   void startLeg(std::size_t i, const Vec3 & from);
+  void startFig8Entry(const Vec3 & from);
+  void startReturn(const Vec3 & from);
+  // drzi `pos` a otaca na `target`; true = natoceny nepretrzite align_time
+  bool alignStep(const VehicleState & st, double now, const Vec3 & pos, double target,
+    const std::string & what);
   double heightAboveLaunch(const VehicleState & st) const;
   // land = true: po preruseni poziadaj o LAND; false: len prestan riadit (pilot prevzal)
   void doAbort(const std::string & why, bool land);
@@ -152,6 +186,9 @@ private:
   void onHold(const VehicleState & st, double now);
   void onPoiAlign(const VehicleState & st, double now);
   void onSquare(const VehicleState & st, double now);
+  void onFig8Entry(const VehicleState & st, double now);
+  void onFig8Align(const VehicleState & st, double now);
+  void onFig8(const VehicleState & st, double now);
   void onReturn(const VehicleState & st, double now);
   void onLand(const VehicleState & st, double now);
   void onAbort(const VehicleState & st, double now);
@@ -185,6 +222,13 @@ private:
   PoiStats poi_stats_;
   double poi_err_deg_{-1.0};
   int corners_reached_{0};
+
+  Figure8 fig8_;
+  double fig8_t0_{0.0};
+  double entry_yaw0_{0.0}, entry_yaw1_{0.0};
+  int fig8_quarter_{0};
+  Fig8Stats fig8_stats_;
+  double track_err_{-1.0};
 
   double req_sent_t_{-1.0};
   int req_attempts_{0};

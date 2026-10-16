@@ -4,6 +4,7 @@
 // Trapezoid  : rychlostny profil 0 -> v_max -> 0 s obmedzenym zrychlenim
 // StraightLeg: priamy usek a -> b s trapezoidovym profilom; vracia polohu
 //              aj rychlost v case t (rychlost ide do setpointu ako feedforward)
+// Figure8    : osmicka x = A sin t, y = A sin t cos t s tangencialnym yaw
 #include <algorithm>
 #include <cmath>
 
@@ -86,6 +87,75 @@ struct StraightLeg
     const double v = prof.v(t);
     const Vec3 d = dir();
     return {d.x * v, d.y * v, d.z * v};
+  }
+};
+
+// Osmicka (Geronova lemniskata) okolo stredu c, v rovine vo vyske c.z:
+//
+//   x(th) = A sin(th)
+//   y(th) = A sin(th) cos(th)          (potom otocene o `rot` okolo c, ENU)
+//
+// Faza th(t) je casovy profil: rozbeh za `ramp` s na th' = omega, konstantne omega,
+// dobeh na th = 2*pi*laps. Pri ramp = 0 je to presne th = omega * t.
+// Rychlost   |v| = A * th' * sqrt(cos^2 th + cos^2 2th),  max A * omega * sqrt(2) v strede.
+// Tangenta   yaw = atan2(cos 2th, cos th) + rot  (derivacie podla th, takze je
+//            definovana aj pri th' = 0; cos th a cos 2th nie su nikdy naraz 0).
+struct Figure8
+{
+  Vec3 c{};
+  double A{3.0};
+  double rot{0.0};
+  Trapezoid phase;
+
+  Figure8() = default;
+  Figure8(const Vec3 & center, double amplitude, double omega, double laps, double ramp,
+    double rotation)
+  : c(center), A(amplitude), rot(rotation),
+    phase(2.0 * kPi * laps, omega, ramp > 0.0 ? omega / ramp : 1e9) {}
+
+  double duration() const {return phase.duration();}
+  double omega() const {return phase.v_max;}
+  double theta(double t) const {return phase.s(t);}
+  double maxSpeed() const {return A * omega() * std::sqrt(2.0);}
+
+  Vec3 posAt(double th) const
+  {
+    return rotAdd(A * std::sin(th), A * std::sin(th) * std::cos(th), c.z);
+  }
+  // derivacia podla th (smer dotycnice, bez th')
+  Vec3 dPosAt(double th) const
+  {
+    const double dx = A * std::cos(th), dy = A * std::cos(2.0 * th);
+    const double cr = std::cos(rot), sr = std::sin(rot);
+    return {cr * dx - sr * dy, sr * dx + cr * dy, 0.0};
+  }
+  double tangentYawAt(double th) const
+  {
+    return wrapPi(std::atan2(std::cos(2.0 * th), std::cos(th)) + rot);
+  }
+  // d(yaw)/d(th) = (f g' - g f') / (f^2 + g^2),  f = cos th, g = cos 2th
+  double dYawAt(double th) const
+  {
+    const double f = std::cos(th), g = std::cos(2.0 * th);
+    const double df = -std::sin(th), dg = -2.0 * std::sin(2.0 * th);
+    return (f * dg - g * df) / (f * f + g * g);
+  }
+
+  Vec3 pos(double t) const {return posAt(theta(t));}
+  Vec3 vel(double t) const
+  {
+    const Vec3 d = dPosAt(theta(t));
+    const double w = phase.v(t);
+    return {d.x * w, d.y * w, 0.0};
+  }
+  double yaw(double t) const {return tangentYawAt(theta(t));}
+  double yawRate(double t) const {return dYawAt(theta(t)) * phase.v(t);}
+
+private:
+  Vec3 rotAdd(double x, double y, double z) const
+  {
+    const double cr = std::cos(rot), sr = std::sin(rot);
+    return {c.x + cr * x - sr * y, c.y + sr * x + cr * y, z};
   }
 };
 

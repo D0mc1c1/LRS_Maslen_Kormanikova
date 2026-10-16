@@ -5,7 +5,11 @@
 //   (v terminali na jeden riadok alebo s '\' na konci riadkov)
 //
 // GPS -> home -> GUIDED -> arm -> vzlet na `altitude` -> drzanie -> natocenie na POI
-// -> stvorec okolo POI (nos stale na POI) -> navrat nad miesto vzletu -> LAND.
+// -> stvorec okolo POI (nos stale na POI) -> osmicka nad POI (casova trajektoria,
+// yaw = tangenta) -> navrat nad miesto vzletu -> LAND.
+//
+// Osmicka: riadiaci timer (setpoint_rate, 20 Hz) v kazdom ticku vola executor, ktory
+// vypocita t = omega * (now - t_start) a z rovnic novy setpoint (poloha, rychlost, yaw).
 // Ramec: MAVROS local ENU bez transformacie (FrameTransform{} = identita).
 //
 // Vlakna rovnako ako indoor_mission:
@@ -66,6 +70,13 @@ public:
     p.velocity_ff = declare_parameter("velocity_ff", p.velocity_ff);
     p.yaw_rate_ff = declare_parameter("yaw_rate_ff", p.yaw_rate_ff);
     p.geofence_radius = declare_parameter("geofence_radius", p.geofence_radius);
+    p.fig8_amplitude = declare_parameter("fig8_amplitude", p.fig8_amplitude);
+    p.fig8_omega = declare_parameter("fig8_omega", p.fig8_omega);
+    p.fig8_laps = declare_parameter("fig8_laps", p.fig8_laps);
+    p.fig8_ramp = declare_parameter("fig8_ramp", p.fig8_ramp);
+    p.fig8_rotation_deg = declare_parameter("fig8_rotation_deg", p.fig8_rotation_deg);
+    p.fig8_max_speed = declare_parameter("fig8_max_speed", p.fig8_max_speed);
+    p.max_track_err = declare_parameter("max_track_err", p.max_track_err);
     p.request_retry = declare_parameter("request_retry", p.request_retry);
     p.mode_timeout = declare_parameter("mode_timeout", p.mode_timeout);
     p.arm_timeout = declare_parameter("arm_timeout", p.arm_timeout);
@@ -82,6 +93,9 @@ public:
     p.poi_yaw_from_setpoint = yaw_src == "setpoint";
     if (p.speed <= 0.0 || p.speed > 3.0 || p.accel <= 0.0) {
       throw std::runtime_error("speed musi byt v (0, 3] m/s a accel > 0");
+    }
+    if (p.fig8_omega <= 0.0 || p.fig8_laps < 1.0 || p.fig8_ramp < 0.0 || p.fig8_amplitude <= 0.0) {
+      throw std::runtime_error("fig8: omega > 0, laps >= 1, ramp >= 0, amplitude > 0");
     }
 
     // outdoor: pracujeme priamo v MAVROS local ENU
@@ -153,6 +167,8 @@ private:
       st.gps.lat_deg, st.gps.lon_deg, st.compass_hdg_deg, lrs_control::rad2deg(st.yaw),
       executor_->poiErrDeg() >= 0.0 ?
       (" | chyba na POI " + std::to_string(executor_->poiErrDeg()).substr(0, 4) + " deg").c_str() :
+      executor_->trackErr() >= 0.0 ?
+      (" | odchylka od osmicky " + std::to_string(executor_->trackErr()).substr(0, 4) + " m").c_str() :
       "");
     RCLCPP_INFO(get_logger(), "%s", b);
   }

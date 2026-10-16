@@ -48,6 +48,9 @@ const char * OutdoorExecutor::name(State s)
     case State::HOLD: return "HOLD";
     case State::POI_ALIGN: return "POI_ALIGN";
     case State::SQUARE: return "SQUARE";
+    case State::FIG8_ENTRY: return "FIG8_ENTRY";
+    case State::FIG8_ALIGN: return "FIG8_ALIGN";
+    case State::FIG8: return "FIG8";
     case State::RETURN: return "RETURN";
     case State::LAND: return "LAND";
     case State::DONE: return "DONE";
@@ -90,6 +93,9 @@ void OutdoorExecutor::tick(double now)
     case State::HOLD: onHold(st, now); break;
     case State::POI_ALIGN: onPoiAlign(st, now); break;
     case State::SQUARE: onSquare(st, now); break;
+    case State::FIG8_ENTRY: onFig8Entry(st, now); break;
+    case State::FIG8_ALIGN: onFig8Align(st, now); break;
+    case State::FIG8: onFig8(st, now); break;
     case State::RETURN: onReturn(st, now); break;
     case State::LAND: onLand(st, now); break;
     case State::DONE: break;
@@ -113,6 +119,8 @@ void OutdoorExecutor::enter(State s, const std::string & why)
   req_attempts_ = 0;
   cond_t0_.reset();
   last_wait_log_ = now_;
+  poi_err_deg_ = -1.0;
+  track_err_ = -1.0;
 }
 
 void OutdoorExecutor::abort(const std::string & why)
@@ -134,6 +142,7 @@ void OutdoorExecutor::doAbort(const std::string & why, bool land)
 bool OutdoorExecutor::airborneState() const
 {
   return state_ == State::HOLD || state_ == State::POI_ALIGN || state_ == State::SQUARE ||
+         state_ == State::FIG8_ENTRY || state_ == State::FIG8_ALIGN || state_ == State::FIG8 ||
          state_ == State::RETURN;
 }
 
@@ -220,9 +229,24 @@ bool OutdoorExecutor::setupMissionGeometry(const VehicleState & st)
   }
   square_.push_back(square_[0]);   // uzavriet stvorec
 
+  // osmicka so stredom nad POI
+  fig8_ = Figure8({poi_.x, poi_.y, z}, p_.fig8_amplitude, p_.fig8_omega, p_.fig8_laps,
+    p_.fig8_ramp, deg2rad(p_.fig8_rotation_deg));
+  std::snprintf(b, sizeof(b), "osmicka: A %.1f m, omega %.3f rad/s, max rychlost A*omega*sqrt2 = "
+    "%.2f m/s (limit %.1f), %.1f kola za %.1f s (rozbeh/dobeh %.1f s), otocenie %.0f deg",
+    fig8_.A, fig8_.omega(), fig8_.maxSpeed(), p_.fig8_max_speed, p_.fig8_laps,
+    fig8_.duration(), p_.fig8_ramp, p_.fig8_rotation_deg);
+  log(fig8_.maxSpeed() > p_.fig8_max_speed ? LogLevel::Error : LogLevel::Info, b);
+  if (fig8_.maxSpeed() > p_.fig8_max_speed) {
+    return false;
+  }
+
   double r_max = 0.0;
   for (const auto & w : square_) {
     r_max = std::max(r_max, distXY(w, launch_));
+  }
+  for (int k = 0; k < 360; ++k) {
+    r_max = std::max(r_max, distXY(fig8_.posAt(deg2rad(k)), launch_));
   }
   std::snprintf(b, sizeof(b), "geofence: misia max. %.2f m od miesta vzletu (limit %.1f m), "
     "vyska %.1f m", r_max, p_.geofence_radius, p_.altitude);
@@ -343,7 +367,7 @@ void OutdoorExecutor::onWaitOrigin(const VehicleState & st, double now)
       " m od pociatku (home nastaveny inde?)");
   }
   if (!setupMissionGeometry(st)) {
-    doAbort("misia je mimo geofence, NEVZLIETAM (skontroluj POI)", false);
+    doAbort("misia je mimo geofence alebo prilis rychla, NEVZLIETAM (skontroluj parametre)", false);
     return;
   }
   enter(State::SET_MODE, "vzlet na " + fmt("%.1f", p_.altitude) + " m nad miestom vzletu");
@@ -441,27 +465,36 @@ void OutdoorExecutor::onHold(const VehicleState & st, double now)
   }
 }
 
-void OutdoorExecutor::onPoiAlign(const VehicleState & st, double now)
+bool OutdoorExecutor::alignStep(const VehicleState & st, double now, const Vec3 & pos,
+  double target, const std::string & what)
 {
-  // smer na POI z bodu drzania; ak je dron priamo nad POI, natoci sa tak,
-  // ako to bude treba vo W1
-  const double target = poiYaw(hold_target_, poiYaw(square_[0], yaw_sp_));
-  sendTraj(hold_target_, {}, unwrapNear(target, yaw_sp_), 0.0);
+  sendTraj(pos, {}, unwrapNear(target, yaw_sp_), 0.0);
   const double err = std::abs(rad2deg(angleDiff(target, st.yaw)));
   if (err < p_.align_tol_deg) {
     if (!cond_t0_) {
       cond_t0_ = now;
     }
     if (now - *cond_t0_ >= p_.align_time) {
-      enter(State::SQUARE, "nos na POI, chyba " + fmt("%.1f deg", err));
-      startLeg(0, hold_target_);
-      return;
+      log(LogLevel::Info, what + ": natoceny, chyba " + fmt("%.1f deg", err));
+      return true;
     }
   } else {
     cond_t0_.reset();
   }
   if (inState(now) > p_.hold_timeout) {
-    doAbort("natocenie na POI sa nepodarilo (chyba " + fmt("%.1f deg)", err), true);
+    doAbort(what + ": natocenie sa nepodarilo (chyba " + fmt("%.1f deg)", err), true);
+  }
+  return false;
+}
+
+void OutdoorExecutor::onPoiAlign(const VehicleState & st, double now)
+{
+  // smer na POI z bodu drzania; ak je dron priamo nad POI, natoci sa tak,
+  // ako to bude treba vo W1
+  const double target = poiYaw(hold_target_, poiYaw(square_[0], yaw_sp_));
+  if (alignStep(st, now, hold_target_, target, "nos na POI")) {
+    enter(State::SQUARE, "zaciatok stvorca");
+    startLeg(0, hold_target_);
   }
 }
 
@@ -508,15 +541,119 @@ void OutdoorExecutor::onSquare(const VehicleState & st, double now)
       std::snprintf(b, sizeof(b), "stvorec hotovy: chyba natocenia na POI max %.1f deg, "
         "RMS %.1f deg (%ld vzoriek)", poi_stats_.max_deg, poi_stats_.rmsDeg(), poi_stats_.n);
       log(LogLevel::Info, b);
-      enter(State::RETURN, "navrat nad miesto vzletu");
-      leg_ = StraightLeg(goal, hold_target_, p_.speed, p_.accel);
-      leg_t0_ = now;
+      startFig8Entry(goal);
     }
     return;
   }
   if (t > leg_.duration() + p_.leg_timeout_extra) {
     doAbort(wpName(leg_i_) + " nedosiahnuty (chyba " + fmt("%.2f m)", dist(st.pos, goal)), true);
   }
+}
+
+void OutdoorExecutor::startFig8Entry(const Vec3 & from)
+{
+  enter(State::FIG8_ENTRY, "presun do stredu osmicky nad POI");
+  leg_ = StraightLeg(from, fig8_.c, p_.speed, p_.accel);
+  leg_t0_ = now_;
+  // pocas presunu sa yaw plynulo stoci na tangentu osmicky v t = 0
+  entry_yaw0_ = yaw_sp_;
+  entry_yaw1_ = unwrapNear(fig8_.tangentYawAt(0.0), yaw_sp_);
+}
+
+void OutdoorExecutor::onFig8Entry(const VehicleState & st, double now)
+{
+  const double t = now - leg_t0_;
+  const double L = leg_.length();
+  const double frac = L > 1e-6 ? leg_.prof.s(t) / L : 1.0;
+  const double dyaw = entry_yaw1_ - entry_yaw0_;
+  sendTraj(leg_.pos(t), leg_.vel(t), entry_yaw0_ + dyaw * frac,
+    L > 1e-6 ? dyaw / L * leg_.prof.v(t) : 0.0);
+  const double err = dist(st.pos, fig8_.c);
+  if (t >= leg_.duration() && err < p_.corner_tol) {
+    enter(State::FIG8_ALIGN, "v strede osmicky, chyba " + fmt("%.2f m", err));
+    return;
+  }
+  if (t > leg_.duration() + p_.leg_timeout_extra) {
+    doAbort("stred osmicky nedosiahnuty (chyba " + fmt("%.2f m)", err), true);
+  }
+}
+
+void OutdoorExecutor::onFig8Align(const VehicleState & st, double now)
+{
+  if (alignStep(st, now, fig8_.c, fig8_.tangentYawAt(0.0), "tangenta osmicky")) {
+    enter(State::FIG8, "start casovej trajektorie, t = omega * (now - t_start)");
+    fig8_t0_ = now;
+    fig8_quarter_ = 0;
+    fig8_stats_ = Fig8Stats{};
+  }
+}
+
+void OutdoorExecutor::onFig8(const VehicleState & st, double now)
+{
+  // Novy setpoint z rovnic kazdy tick (tick = ROS timer v node, 20 Hz).
+  const double t = now - fig8_t0_;
+  const double th = fig8_.theta(t);
+  const Vec3 p = fig8_.pos(t);
+  // yaw = tangenta; unwrap -> setpoint sa nikdy neskoci o 2*pi
+  const double yaw = unwrapNear(fig8_.yaw(t), yaw_sp_);
+  auto & fs = fig8_stats_;
+  fs.max_yaw_step_deg = std::max(fs.max_yaw_step_deg, std::abs(rad2deg(yaw - yaw_sp_)));
+  sendTraj(p, fig8_.vel(t), yaw, fig8_.yawRate(t));
+
+  // statistiky: skutocna poloha vs. setpoint, nos vs. tangenta, rozmery
+  track_err_ = dist(st.pos, p);
+  const double yaw_err = std::abs(rad2deg(angleDiff(yaw, st.yaw)));
+  fs.track_max = std::max(fs.track_max, track_err_);
+  fs.track_sum_sq += track_err_ * track_err_;
+  fs.yaw_max_deg = std::max(fs.yaw_max_deg, yaw_err);
+  fs.yaw_sum_sq += yaw_err * yaw_err;
+  ++fs.n;
+  fs.x_min = std::min(fs.x_min, st.pos.x - fig8_.c.x);
+  fs.x_max = std::max(fs.x_max, st.pos.x - fig8_.c.x);
+  fs.y_min = std::min(fs.y_min, st.pos.y - fig8_.c.y);
+  fs.y_max = std::max(fs.y_max, st.pos.y - fig8_.c.y);
+
+  if (track_err_ > p_.max_track_err) {
+    doAbort("dron sa odchylil od osmicky o " + fmt("%.2f m", track_err_), true);
+    return;
+  }
+
+  // priebeh po stvrtinach kola
+  const int q = static_cast<int>(th / (kPi / 2.0) + 1e-9);
+  if (q > fig8_quarter_) {
+    fig8_quarter_ = q;
+    char b[200];
+    std::snprintf(b, sizeof(b), "FIG8 th = %.2f pi: od POI E %.2f N %.2f, rychlost %.2f m/s, "
+      "odchylka %.2f m, yaw %.0f deg (ciel %.0f)", th / kPi, st.pos.x - fig8_.c.x,
+      st.pos.y - fig8_.c.y, norm(st.vel), track_err_, rad2deg(wrapPi(st.yaw)),
+      rad2deg(wrapPi(yaw)));
+    log(LogLevel::Info, b);
+  }
+
+  if (t >= fig8_.duration()) {
+    const double err = dist(st.pos, fig8_.c);
+    if (err < p_.corner_tol) {
+      fs.done = true;
+      char b[220];
+      std::snprintf(b, sizeof(b), "osmicka hotova za %.1f s: odchylka polohy max %.2f m RMS %.2f m,"
+        " yaw vs tangenta max %.1f deg RMS %.1f deg, max skok yaw setpointu %.1f deg",
+        t, fs.track_max, fs.trackRms(), fs.yaw_max_deg, fs.yawRmsDeg(), fs.max_yaw_step_deg);
+      log(LogLevel::Info, b);
+      std::snprintf(b, sizeof(b), "osmicka rozmery: E %.2f .. %.2f m, N %.2f .. %.2f m "
+        "(teoria +-%.2f, +-%.2f)", fs.x_min, fs.x_max, fs.y_min, fs.y_max, fig8_.A, fig8_.A / 2.0);
+      log(LogLevel::Info, b);
+      startReturn(fig8_.c);
+    } else if (t > fig8_.duration() + p_.leg_timeout_extra) {
+      doAbort("po osmicke sa dron nevratil do stredu (chyba " + fmt("%.2f m)", err), true);
+    }
+  }
+}
+
+void OutdoorExecutor::startReturn(const Vec3 & from)
+{
+  enter(State::RETURN, "navrat nad miesto vzletu");
+  leg_ = StraightLeg(from, hold_target_, p_.speed, p_.accel);
+  leg_t0_ = now_;
 }
 
 void OutdoorExecutor::onReturn(const VehicleState & st, double now)

@@ -2,15 +2,18 @@
 //
 // Offline test OutdoorExecutor BEZ ROS a bez Gazeba (simulovany dron: sim_vehicle.hpp).
 // Scenare:
-//   normal    GPS po 2 s, home po 4 s -> vzlet, stvorec s POI, navrat, pristatie (DONE)
-//   noff      ako normal, ale bez feedforward (len poloha + yaw) -> vacsia chyba na POI
+//   normal    GPS po 2 s, home po 4 s -> vzlet, stvorec s POI, osmicka, navrat, pristatie
+//   noff      ako normal, ale bez feedforward (len poloha + yaw) -> vacsie chyby
+//   noramp    osmicka bez rozbehu (th = omega * t od nuly) -> skok rychlosti na starte
+//   fast      osmicka omega 0.35 rad/s (max 1.48 m/s, limit 1.5)
+//   toofast   osmicka omega 0.40 rad/s (max 1.70 m/s > 1.5) -> NEVZLIETA
 //   setpoint  smer na POI zo setpointu namiesto skutocnej polohy
 //   latlon    POI zadane ako lat/lon (rovnake miesto ako posun E 0 N 5)
 //   nohome    home nepride -> pociatok z GPS fixu po home_wait (DONE)
 //   nogps     GPS sa nikdy nechyti -> NEARMUJE, po 30 s koniec testu
 //   geofence  POI 50 m daleko -> NEVZLIETA
 //   rc        pilot prepne na stvorci na LOITER -> ABORT bez prikazu LAND
-//   abort     sluzba ~/abort na stvorci -> ABORT + LAND na mieste
+//   abort     sluzba ~/abort v polovici osmicky -> ABORT + LAND na mieste
 #include <cstdio>
 #include <iostream>
 #include <set>
@@ -40,10 +43,11 @@ public:
 int main(int argc, char ** argv)
 {
   const std::string sc = argc > 1 ? argv[1] : "normal";
-  const std::set<std::string> known{"normal", "noff", "setpoint", "latlon", "nohome", "nogps",
-    "geofence", "rc", "abort"};
+  const std::set<std::string> known{"normal", "noff", "noramp", "fast", "toofast", "setpoint",
+    "latlon", "nohome", "nogps", "geofence", "rc", "abort"};
   if (!known.count(sc)) {
-    std::cerr << "usage: outdoor_sim [normal|noff|setpoint|latlon|nohome|nogps|geofence|rc|abort]\n";
+    std::cerr << "usage: outdoor_sim [normal|noff|noramp|fast|toofast|setpoint|latlon|nohome|"
+      "nogps|geofence|rc|abort]\n";
     return 1;
   }
 
@@ -63,6 +67,9 @@ int main(int argc, char ** argv)
     p.poi_lon = g.lon_deg;
   }
   if (sc == "geofence") {p.poi_north = 50.0;}
+  if (sc == "noramp") {p.fig8_ramp = 0.0;}
+  if (sc == "fast") {p.fig8_omega = 0.35;}
+  if (sc == "toofast") {p.fig8_omega = 0.40;}
 
   OutdoorExecutor ex(veh, p, [&veh](OutdoorExecutor::LogLevel l, const std::string & m) {
       const char * tag = l == OutdoorExecutor::LogLevel::Error ? "ERROR" :
@@ -88,17 +95,17 @@ int main(int argc, char ** argv)
       const Vec3 tgt{ex.launch().x, ex.launch().y, ex.launch().z + p.altitude};
       if (veh.t() - hold_t0 > 2.0) {max_hold_err = std::max(max_hold_err, dist(st.pos, tgt));}
     }
-    // zasah uprostred stvorca (po W2)
-    if (!injected && ex.state() == State::SQUARE && ex.cornersReached() >= 2) {
+    // pilot uprostred stvorca (po W2), abort v polovici osmicky
+    if (!injected && sc == "rc" && ex.state() == State::SQUARE && ex.cornersReached() >= 2) {
       injected = true;
       land_req_at_inject = veh.land_requests;
-      if (sc == "rc") {
-        std::printf("SIM   pilot prepol z RC na LOITER\n");
-        veh.forceMode("LOITER");
-      } else if (sc == "abort") {
-        std::printf("SIM   volanie ~/abort\n");
-        ex.abort("abort cez sluzbu ~/abort");
-      }
+      std::printf("SIM   pilot prepol z RC na LOITER\n");
+      veh.forceMode("LOITER");
+    }
+    if (!injected && sc == "abort" && ex.state() == State::FIG8 && ex.fig8Stats().n > 280) {
+      injected = true;
+      std::printf("SIM   volanie ~/abort\n");
+      ex.abort("abort cez sluzbu ~/abort");
     }
   }
   // ABORT: este 60 s simulovat (pristatie po abort, resp. ze po RC nic neposiela)
@@ -111,22 +118,31 @@ int main(int argc, char ** argv)
   const auto & ps = ex.poiStats();
   std::printf("\n=== %s: stav %s, t = %.1f s, max vyska %.2f m, max od vzletu %.2f m\n",
     sc.c_str(), OutdoorExecutor::name(ex.state()), veh.t(), max_z, max_r);
+  const auto & fs = ex.fig8Stats();
   std::printf("    drzanie max chyba %.3f m | rohy %d/5 | yaw na POI max %.1f deg RMS %.1f deg\n",
     max_hold_err, ex.cornersReached(), ps.max_deg, ps.rmsDeg());
+  std::printf("    osmicka %s: odchylka max %.2f m RMS %.2f m | yaw max %.1f deg RMS %.1f deg | "
+    "E %.2f..%.2f N %.2f..%.2f\n", fs.done ? "hotova" : "NEDOKONCENA", fs.track_max,
+    fs.trackRms(), fs.yaw_max_deg, fs.yawRmsDeg(), fs.x_min, fs.x_max, fs.y_min, fs.y_max);
   std::printf("    koniec: mod %s armed %d, poloha (%.2f, %.2f, %.2f), LAND poziadaviek %d\n",
     st.mode.c_str(), st.armed, st.pos.x, st.pos.y, st.pos.z, veh.land_requests);
 
   bool ok = false;
+  // tvar osmicky: +-A vo vychode, +-A/2 v severe (zrkadlova by mala rovnaky obal,
+  // smer obletu kontroluje yaw vs. tangenta)
+  const double A = p.fig8_amplitude;
+  const bool shape = std::abs(fs.x_max - A) < 0.2 && std::abs(fs.x_min + A) < 0.2 &&
+    std::abs(fs.y_max - A / 2) < 0.2 && std::abs(fs.y_min + A / 2) < 0.2;
   const bool full = ex.state() == State::DONE && std::abs(max_z - p.altitude) < 0.3 &&
-    max_hold_err < p.hold_tol && !st.armed && ex.cornersReached() == 5 &&
+    max_hold_err < p.hold_tol && !st.armed && ex.cornersReached() == 5 && fs.done && shape &&
     distXY(st.pos, ex.launch()) < 0.3;
-  if (sc == "normal" || sc == "latlon" || sc == "nohome") {
-    ok = full && ps.max_deg < 3.0;
-  } else if (sc == "noff" || sc == "setpoint") {
-    ok = full;   // len prejst; chybu na POI porovnat s normal
+  if (sc == "normal" || sc == "latlon" || sc == "nohome" || sc == "fast") {
+    ok = full && ps.max_deg < 3.0 && fs.track_max < 0.3 && fs.yaw_max_deg < 5.0;
+  } else if (sc == "noff" || sc == "setpoint" || sc == "noramp") {
+    ok = full;   // len prejst; chyby porovnat s normal
   } else if (sc == "nogps") {
     ok = ex.state() == State::WAIT_GPS && !st.armed && max_z == 0.0;
-  } else if (sc == "geofence") {
+  } else if (sc == "geofence" || sc == "toofast") {
     ok = ex.state() == State::ABORT && !st.armed && max_z == 0.0;
   } else if (sc == "rc") {
     // po prevzati pilotom ziadna poziadavka o LAND a mod ostal LOITER

@@ -80,3 +80,16 @@ ros2 run lrs_control outdoor_sim normal    # aj: noff setpoint latlon nohome nog
 ros2 run lrs_control outdoor_mission --ros-args --params-file src/lrs_control/config/outdoor.yaml
 # POI cez lat/lon:  ... -p poi_lat:=48.1514867 -p poi_lon:=17.0737554
 ```
+
+### Časť 4: osmička (časová trajektória)
+
+Po štvorci presun do stredu nad POI (yaw sa cestou plynulo stočí na tangentu), potom
+`x = A sin θ, y = A sin θ cos θ`, `θ = ω·(now − t_start)` – v každom ticku riadiaceho
+timera (20 Hz) nový setpoint (poloha + rýchlosť + yaw = tangenta + yaw_rate). Yaw je
+unwrapnutý. Rozbeh/dobeh fázy `fig8_ramp` odstráni skok rýchlosti na štarte.
+
+```bash
+ros2 run lrs_control outdoor_sim normal    # aj: noramp fast toofast noff abort ...
+ros2 run lrs_control outdoor_mission --ros-args --params-file src/lrs_control/config/outdoor.yaml
+# pomalšie:  ... -p fig8_omega:=0.15
+```

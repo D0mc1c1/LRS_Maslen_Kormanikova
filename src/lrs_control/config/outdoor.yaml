@@ -50,3 +50,19 @@
     velocity_ff: true                 # rychlost trajektorie ako feedforward do setpointu
     yaw_rate_ff: true                 # rychlost otacania ako feedforward (ArduCopter 4.1+)
     geofence_radius: 15.0             # [m] misia dalej od miesta vzletu sa NESPUSTI
+
+    # --- A1.3 cast 4: osmicka nad POI ------------------------------------------------
+    # x = A sin(th), y = A sin(th) cos(th), th = omega * (now - t_start); stred = POI vo vyske letu.
+    # Rychlost |v| = A*omega*sqrt(cos^2 th + cos^2 2th), max v strede A*omega*sqrt(2).
+    # omega 0.25: max 3*0.25*1.414 = 1.06 m/s (ako na stvorci), kolo 2*pi/0.25 = 25.1 s
+    # (+ 3 s rozbeh/dobeh). Max. rychlost otacania 3.17*omega = 45 deg/s (pri lalokoch).
+    # Zadanie dovoluje do 0.35 (1.48 m/s); na realnom drone zacat nizsie (0.15 -> 0.64 m/s).
+    fig8_amplitude: 3.0               # [m] zadanie: A = 3 m -> 6 x 3 m
+    fig8_omega: 0.25                  # [rad/s]
+    fig8_laps: 1.0                    # pocet kol
+    # [s] plynuly rozbeh fazy z 0 na omega (a dobeh na konci). Bez neho by setpoint
+    # v strede vyrazil hned rychlostou 1.06 m/s (skok rychlosti). 0 = presne th = omega*t.
+    fig8_ramp: 3.0
+    fig8_rotation_deg: 0.0            # [deg] otocenie dlhej osi od vychodu (ENU, CCW)
+    fig8_max_speed: 1.5               # [m/s] A*omega*sqrt(2) nad limitom -> NEVZLIETA
+    max_track_err: 1.5                # [m] odchylka od setpointu na osmicke -> ABORT + LAND
