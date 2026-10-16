@@ -3,6 +3,9 @@
 // Offline test stavoveho automatu BEZ ROS a bez Gazeba (simulovany dron: sim_vehicle.hpp).
 // SIM_DETOUR=1 mission_sim ... -> namiesto priamok cesta so 4 medzibodmi (ako z A*)
 // SIM_MAP=<map.pcd> mission_sim ... -> skutocny A* z A1.1
+// SIM_RC=<t>    v case t pilot prepne na LOITER -> ABORT bez prikazu LAND, bez setpointov
+// SIM_ABORT=<t> v case t sluzba ~/abort -> ABORT + LAND
+// SIM_LINK=<t>  v case t spadne MAVROS -> ABORT, nic sa neposiela
 // Pouzitie: rychlo overit logiku (poradie taskov, landtakeoff, yaw) pred letom.
 #include <algorithm>
 #include <cmath>
@@ -79,6 +82,12 @@ int main(int argc, char ** argv)
       std::cout << tag << " " << m << "\n";
     });
 
+  auto envT = [](const char * n) {const char * v = std::getenv(n); return v ? std::stod(v) : -1.0;};
+  const double t_rc = envT("SIM_RC"), t_abort = envT("SIM_ABORT"), t_link = envT("SIM_LINK");
+  bool injected = false;
+  long sp_at_abort = -1;    // pocet setpointov a LAND poziadaviek pri vstupe do ABORT
+  int land_at_abort = 0;
+
   const double dt = 0.01;   // simulacia 100 Hz
   int k = 0;
   while (!ex.finished() && veh.t() < 900.0) {
@@ -90,10 +99,49 @@ int main(int argc, char ** argv)
     if (++k % 5 == 0) {     // riadenie 20 Hz
       ex.tick(veh.t());
     }
+    if (sp_at_abort < 0 && ex.state() == MissionExecutor::State::ABORT) {
+      sp_at_abort = veh.setpoints();
+      land_at_abort = veh.landRequests();
+    }
+    if (!injected) {
+      const double t = veh.t();
+      if (t_rc > 0 && t >= t_rc) {
+        std::printf("SIM   pilot prepol z RC na LOITER\n");
+        veh.forceMode("LOITER");
+      } else if (t_abort > 0 && t >= t_abort) {
+        std::printf("SIM   volanie ~/abort\n");
+        ex.abort("abort cez sluzbu ~/abort");
+      } else if (t_link > 0 && t >= t_link) {
+        std::printf("SIM   MAVROS spadol\n");
+        veh.dropLink();
+      } else {
+        continue;
+      }
+      injected = true;
+    }
+  }
+  // po ABORT este 60 s: pristatie po abort, resp. ze sa uz nic neposiela
+  for (int i = 0; i < 6000 && ex.state() == MissionExecutor::State::ABORT; ++i) {
+    veh.step(dt);
+    if (++k % 5 == 0) {ex.tick(veh.t());}
   }
   const auto st = veh.state();
-  std::printf("\nkoniec: stav=%s t=%.1fs armed=%d pos=(%.2f, %.2f, %.2f) setpointov=%ld\n",
-    MissionExecutor::name(ex.state()), veh.t(), st.armed, st.pos.x, st.pos.y, st.pos.z,
-    veh.setpoints());
-  return ex.state() == MissionExecutor::State::DONE ? 0 : 2;
+  std::printf("\nkoniec: stav=%s t=%.1fs armed=%d mode=%s pos=(%.2f, %.2f, %.2f) setpointov=%ld "
+    "LAND poziadaviek=%d\n", MissionExecutor::name(ex.state()), veh.t(), st.armed,
+    st.mode.c_str(), st.pos.x, st.pos.y, st.pos.z, veh.setpoints(), veh.landRequests());
+
+  bool ok = ex.state() == MissionExecutor::State::DONE;
+  if (injected) {
+    const long sp_after = sp_at_abort < 0 ? -1 : veh.setpoints() - sp_at_abort;
+    const int land_after = veh.landRequests() - land_at_abort;
+    std::printf("po ABORT: setpointov %ld, LAND poziadaviek %d\n", sp_after, land_after);
+    if (t_abort > 0) {
+      ok = ex.state() == MissionExecutor::State::ABORT && st.mode == "LAND" && !st.armed;
+    } else {   // RC / strata spojenia: nic neprikazovat, ziadny setpoint po ABORT
+      ok = ex.state() == MissionExecutor::State::ABORT && land_after == 0 && sp_after == 0 &&
+        ex.finished();
+    }
+    std::printf("VYSLEDOK: %s\n", ok ? "OK" : "CHYBA");
+  }
+  return ok ? 0 : 2;
 }

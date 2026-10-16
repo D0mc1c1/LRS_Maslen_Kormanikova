@@ -66,6 +66,11 @@ struct OutdoorParams
   // bezpecnost: max. vodorovna vzdialenost misie od miesta vzletu
   double geofence_radius{15.0};  // [m]
 
+  // abort a strata spojenia (cast 5)
+  std::string abort_mode{"LAND"};// mod po ~/abort alebo chybe misie: LAND / RTL / BRAKE / LOITER
+  double state_timeout{3.0};     // [s] /mavros/state neprislo -> spojenie stratene
+  double pose_timeout{1.0};      // [s] poloha neprisla -> spojenie stratene
+
   // poziadavky a timeouty [s]
   double request_retry{3.0};
   double mode_timeout{20.0};
@@ -105,11 +110,16 @@ public:
 
   void tick(double now);
 
-  // Externe prerusenie (sluzba ~/abort): dron pristane (LAND).
+  // Externe prerusenie (sluzba ~/abort): prepne do abort_mode (LAND / RTL / ...).
   void abort(const std::string & why);
 
   State state() const {return state_;}
-  bool finished() const {return state_ == State::DONE || state_ == State::ABORT;}
+  // Hotovo = DONE, alebo ABORT, v ktorom uz nie je co prikazat (mod potvrdeny,
+  // dron na zemi, alebo riadenie prevzal pilot). Potom sa node moze ukoncit.
+  bool finished() const
+  {
+    return state_ == State::DONE || (state_ == State::ABORT && !command_on_abort_);
+  }
   static const char * name(State s);
 
   // pre vypisy a nasledujuce casti
@@ -173,8 +183,11 @@ private:
   bool alignStep(const VehicleState & st, double now, const Vec3 & pos, double target,
     const std::string & what);
   double heightAboveLaunch(const VehicleState & st) const;
-  // land = true: po preruseni poziadaj o LAND; false: len prestan riadit (pilot prevzal)
-  void doAbort(const std::string & why, bool land);
+  // command = true: po preruseni prepni do abort_mode;
+  // false: len prestan riadit, NIC neprikazuj (pilot prevzal / spojenie stratene)
+  void doAbort(const std::string & why, bool command);
+  // stavy, v ktorych dron je (alebo bude) armnuty a program ho riadi
+  bool controlState() const;
   void log(LogLevel l, const std::string & msg);
 
   void onWaitConnection(const VehicleState & st);
@@ -232,7 +245,7 @@ private:
 
   double req_sent_t_{-1.0};
   int req_attempts_{0};
-  bool land_on_abort_{true};
+  bool command_on_abort_{true};
 };
 
 }  // namespace lrs_control

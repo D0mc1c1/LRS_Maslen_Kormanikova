@@ -77,6 +77,9 @@ public:
     p.fig8_rotation_deg = declare_parameter("fig8_rotation_deg", p.fig8_rotation_deg);
     p.fig8_max_speed = declare_parameter("fig8_max_speed", p.fig8_max_speed);
     p.max_track_err = declare_parameter("max_track_err", p.max_track_err);
+    p.abort_mode = declare_parameter("abort_mode", p.abort_mode);
+    p.state_timeout = declare_parameter("state_timeout", p.state_timeout);
+    p.pose_timeout = declare_parameter("pose_timeout", p.pose_timeout);
     p.request_retry = declare_parameter("request_retry", p.request_retry);
     p.mode_timeout = declare_parameter("mode_timeout", p.mode_timeout);
     p.arm_timeout = declare_parameter("arm_timeout", p.arm_timeout);
@@ -96,6 +99,14 @@ public:
     }
     if (p.fig8_omega <= 0.0 || p.fig8_laps < 1.0 || p.fig8_ramp < 0.0 || p.fig8_amplitude <= 0.0) {
       throw std::runtime_error("fig8: omega > 0, laps >= 1, ramp >= 0, amplitude > 0");
+    }
+    if (p.abort_mode != "LAND" && p.abort_mode != "RTL" && p.abort_mode != "BRAKE" &&
+      p.abort_mode != "LOITER")
+    {
+      throw std::runtime_error("abort_mode musi byt LAND, RTL, BRAKE alebo LOITER");
+    }
+    if (p.state_timeout < 1.5) {
+      throw std::runtime_error("state_timeout < 1.5 s: /mavros/state chodi len ~1 Hz");
     }
 
     // outdoor: pracujeme priamo v MAVROS local ENU
@@ -120,7 +131,7 @@ public:
       std::shared_ptr<std_srvs::srv::Trigger::Response> res) {
         executor_->abort("abort cez sluzbu ~/abort");
         res->success = true;
-        res->message = "ABORT -> LAND";
+        res->message = "ABORT -> " + abort_mode_;
       },
 #if RCLCPP_VERSION_MAJOR >= 28
       rclcpp::ServicesQoS(),
@@ -129,6 +140,9 @@ public:
 #endif
       control_group_);
 
+    abort_mode_ = p.abort_mode;
+    RCLCPP_INFO(get_logger(), "abort: ~/abort -> %s, spojenie stratene po %.1f s (state) / "
+      "%.1f s (poloha)", p.abort_mode.c_str(), p.state_timeout, p.pose_timeout);
     RCLCPP_INFO(get_logger(), "outdoor misia: vyska %.1f m, stvorec %.1f m, %.1f m/s, POI %s, "
       "yaw na POI zo %s, feedforward v=%d yaw_rate=%d, %.0f Hz",
       p.altitude, p.square_side, p.speed, p.poi_use_latlon ? "lat/lon" : "posun",
@@ -178,6 +192,7 @@ private:
   rclcpp::CallbackGroup::SharedPtr control_group_;
   rclcpp::TimerBase::SharedPtr control_timer_;
   rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr abort_srv_;
+  std::string abort_mode_;
   double status_period_{2.0};
   double last_status_{0.0};
   bool finished_{false};

@@ -72,6 +72,8 @@ private:
 
   mutable std::mutex mtx_;
   VehicleState st_;              // chranene mtx_
+  double state_rx_t_{-1.0};      // cas prijatia poslednej /mavros/state [s, hodiny nodu]
+  double pose_rx_t_{-1.0};       // cas prijatia poslednej polohy
   RequestStatus req_status_{RequestStatus::None};
   std::uint64_t req_id_{0};      // odpoved na staru poziadavku sa ignoruje
 };

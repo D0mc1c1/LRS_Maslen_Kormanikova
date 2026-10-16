@@ -49,3 +49,8 @@
     landtakeoff_wait: 3.0
     arm_timeout: 60.0
     segment_timeout: 120.0
+
+    # abort: ~/abort alebo chyba misie -> LAND (RTL nie: v hale stupa na RTL_ALT).
+    # Pilot prepne mod z RC / strata spojenia -> program prestane riadit, nic neprikazuje.
+    state_timeout: 3.0                # [s] /mavros/state neprislo -> spojenie stratene
+    pose_timeout: 1.0                 # [s] poloha neprisla -> spojenie stratene

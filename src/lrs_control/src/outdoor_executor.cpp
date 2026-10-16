@@ -73,14 +73,19 @@ void OutdoorExecutor::tick(double now)
   sent_this_tick_ = false;
   const VehicleState st = vehicle_.state();
 
+  // Spojenie stratene (MAVROS spadol alebo FCU odpojene): prikazy by aj tak nedosli
+  // -> prestat riadit. Dron drzi poslednu poziciu v GUIDED, dalej rozhoduje pilot
+  // a failsafe ArduPilota.
+  if (controlState()) {
+    std::string why;
+    if (!linkOk(st, p_.state_timeout, p_.pose_timeout, why)) {
+      doAbort("spojenie stratene: " + why, false);
+    }
+  }
   // Pilot prevzal riadenie (iny mod z RC) alebo sa dron disarmol vo vzduchu:
   // NEBOJOVAT s nim -> len prestat posielat setpointy, ziadny prikaz na mod.
   if (airborneState() && (st.mode != "GUIDED" || !st.armed)) {
-    doAbort("mod zmeneny zvonka na '" + st.mode + "', armed=" + (st.armed ? "1" : "0") +
-      " -> riadenie odovzdane pilotovi", false);
-  }
-  if (airborneState() && !st.connected) {
-    doAbort("MAVROS stratil spojenie s dronom", false);
+    doAbort("mod zmeneny zvonka na '" + st.mode + "', armed=" + (st.armed ? "1" : "0"), false);
   }
 
   switch (state_) {
@@ -128,13 +133,20 @@ void OutdoorExecutor::abort(const std::string & why)
   doAbort(why, true);
 }
 
-void OutdoorExecutor::doAbort(const std::string & why, bool land)
+void OutdoorExecutor::doAbort(const std::string & why, bool command)
 {
   if (state_ == State::ABORT || state_ == State::DONE) {
     return;
   }
-  land_on_abort_ = land;
-  enter(State::ABORT, why + (land ? " -> LAND" : ""));
+  command_on_abort_ = command;
+  enter(State::ABORT, why + (command ? " -> " + p_.abort_mode :
+    std::string(" -> prestavam riadit, nic neprikazujem")));
+}
+
+bool OutdoorExecutor::controlState() const
+{
+  return state_ == State::SET_MODE || state_ == State::ARM || state_ == State::TAKEOFF ||
+         state_ == State::LAND || airborneState();
 }
 
 // Stavy, v ktorych program riadi dron vo vzduchu a posiela setpointy.
@@ -703,13 +715,29 @@ void OutdoorExecutor::onLand(const VehicleState & st, double now)
 
 void OutdoorExecutor::onAbort(const VehicleState & st, double now)
 {
-  // land_on_abort_ = false: pilot prevzal riadenie, NIC neposielame.
-  // Ked je LAND raz potvrdeny, dalsie zmeny modu su pilotove -> uz neposielame nic.
-  if (st.mode == "LAND") {
-    land_on_abort_ = false;
+  // command_on_abort_ = false: pilot prevzal / spojenie stratene -> NIC neposielame.
+  if (!command_on_abort_) {
+    return;
   }
-  if (land_on_abort_ && st.armed && requestDue(now) && req_attempts_ < 5) {
-    vehicle_.requestMode("LAND");
+  if (!st.armed) {
+    command_on_abort_ = false;
+    log(LogLevel::Info, "ABORT: dron je disarmnuty, nie je co prikazat");
+    return;
+  }
+  // Mod potvrdeny -> dalej riadi ArduPilot. Dalsie zmeny modu su pilotove,
+  // takze uz neposielame nic.
+  if (st.mode == p_.abort_mode) {
+    command_on_abort_ = false;
+    log(LogLevel::Info, "ABORT: mod " + p_.abort_mode + " potvrdeny, dalej riadi ArduPilot");
+    return;
+  }
+  if (requestDue(now)) {
+    if (req_attempts_ >= 5) {
+      command_on_abort_ = false;
+      log(LogLevel::Error, "ABORT: " + p_.abort_mode + " sa nepodarilo nastavit, riadi pilot");
+      return;
+    }
+    vehicle_.requestMode(p_.abort_mode);
     markRequestSent(now);
   }
 }

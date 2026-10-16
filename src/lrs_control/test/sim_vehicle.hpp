@@ -34,12 +34,25 @@ public:
 
   // zasah pilota z RC (prepnutie modu mimo programu)
   void forceMode(const std::string & m) {s_.mode = m;}
+  // MAVROS spadne: spravy prestanu chodit, poziadavky ani setpointy sa nedorucia
+  void dropLink() {link_down_ = true;}
 
-  VehicleState state() const override {return s_;}
+  VehicleState state() const override
+  {
+    VehicleState s = s_;
+    s.state_age = s.pose_age = t_ - link_t_;
+    return s;
+  }
 
-  void requestMode(const std::string & m) override {pend("mode", [this, m] {s_.mode = m; return true;});}
+  void requestMode(const std::string & m) override
+  {
+    if (m == "LAND") {++land_requests_;}
+    if (link_down_) {return;}
+    pend("mode", [this, m] {s_.mode = m; return true;});
+  }
   void requestArm(bool a) override
   {
+    if (link_down_) {return;}
     pend("arm", [this, a] {
         if (s_.mode != "GUIDED") {return false;}
         s_.armed = a;
@@ -49,6 +62,7 @@ public:
   }
   void requestTakeoff(double z) override
   {
+    if (link_down_) {return;}
     pend("takeoff", [this, z] {
         if (!s_.armed || s_.mode != "GUIDED" || airborne_) {return false;}
         target_ = {s_.pos.x, s_.pos.y, z};
@@ -58,7 +72,12 @@ public:
         return true;
       });
   }
-  void requestLand() override {pend("land", [this] {s_.mode = "LAND"; return true;});}
+  void requestLand() override
+  {
+    ++land_requests_;
+    if (link_down_) {return;}
+    pend("land", [this] {s_.mode = "LAND"; return true;});
+  }
   RequestStatus requestStatus() const override {return status_;}
 
   void sendPositionTarget(const Vec3 & p, double yaw) override
@@ -71,18 +90,20 @@ public:
   // rychlost a yaw_rate = feedforward, P regulator dorovnava len odchylku
   void sendTrajectorySetpoint(const TrajectorySetpoint & sp) override
   {
+    ++setpoints_;
+    if (link_down_) {return;}
     if (s_.mode == "GUIDED" && s_.armed && airborne_) {
       target_ = sp.p;
       v_ff_ = sp.v.value_or(Vec3{});
       yaw_target_ = sp.yaw;
       yaw_rate_ff_ = sp.yaw_rate.value_or(0.0);
     }
-    ++setpoints_;
   }
 
   void step(double dt)
   {
     t_ += dt;
+    if (!link_down_) {link_t_ = t_;}
     s_.connected = t_ > 0.5;
     s_.has_pose = t_ > 0.5;
     if (pending_ && t_ >= pending_t_) {   // odpoved sluzby po 0.2 s
@@ -99,6 +120,15 @@ public:
         s_.pos.z = 0;
         land_t_ += dt;
         if (land_t_ > 1.0) {s_.armed = false; airborne_ = false; land_t_ = 0;}
+      }
+    } else if (s_.mode == "RTL" && s_.armed) {
+      // RTL: nad home (0, 0), potom pristatie ako LAND
+      const double d = std::hypot(s_.pos.x, s_.pos.y);
+      if (d > 0.1) {
+        const double v = std::min(1.5, 1.2 * d);
+        v_des = {-s_.pos.x / d * v, -s_.pos.y / d * v, 0.0};
+      } else {
+        s_.mode = "LAND";
       }
     } else if (s_.mode == "GUIDED" && airborne_) {
       // P regulator polohy s obmedzenim rychlosti (vmax 1.5 m/s)
@@ -138,6 +168,7 @@ public:
   }
 
   long setpoints() const {return setpoints_;}
+  int landRequests() const {return land_requests_;}
   double t() const {return t_;}
 
 private:
@@ -159,6 +190,9 @@ private:
   double yaw_target_{0}, yaw_rate_ff_{0};
   long setpoints_{0};
   bool gps_on_{false};
+  bool link_down_{false};
+  double link_t_{0.0};
+  int land_requests_{0};
   LocalTangentPlane ltp_;
   double gps_after_{0}, home_after_{-1};
 };

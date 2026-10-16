@@ -93,3 +93,18 @@ ros2 run lrs_control outdoor_sim normal    # aj: noramp fast toofast noff abort 
 ros2 run lrs_control outdoor_mission --ros-args --params-file src/lrs_control/config/outdoor.yaml
 # pomalšie:  ... -p fig8_omega:=0.15
 ```
+
+### Časť 5: abort, zásah pilota, strata spojenia (indoor aj outdoor)
+
+| Udalosť | Reakcia programu |
+|---|---|
+| `~/abort` alebo chyba misie (timeout, odchýlka) | prepne do `abort_mode` (outdoor LAND/RTL/BRAKE/LOITER, indoor vždy LAND); po potvrdení módu node skončí |
+| pilot prepne mód z RC, disarm vo vzduchu | **prestane posielať setpointy, nič neprikazuje** (nebojuje s pilotom), node skončí |
+| MAVROS spadne / FCU odpojené (`/mavros/state` > 3 s, poloha > 1 s) | to isté – prestane riadiť, ArduPilot drží pozíciu, ďalej pilot a failsafe |
+
+```bash
+ros2 service call /outdoor_mission/abort std_srvs/srv/Trigger
+ros2 service call /indoor_mission/abort std_srvs/srv/Trigger
+ros2 run lrs_control outdoor_sim rc          # aj: abort abortrtl linkloss
+SIM_RC=30 ros2 run lrs_control mission_sim src/lrs_control/missions/test_open.csv   # aj SIM_ABORT, SIM_LINK
+```

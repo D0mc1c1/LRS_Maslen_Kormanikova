@@ -43,20 +43,24 @@ MavrosVehicle::MavrosVehicle(rclcpp::Node & node, const FrameTransform & tf)
   state_sub_ = node_.create_subscription<mavros_msgs::msg::State>(
     "/mavros/state", qos,
     [this](const mavros_msgs::msg::State & m) {
+      const double t = node_.now().seconds();
       std::lock_guard<std::mutex> lk(mtx_);
       st_.connected = m.connected;
       st_.armed = m.armed;
       st_.mode = m.mode;
+      state_rx_t_ = t;
     }, opts);
 
   pose_sub_ = node_.create_subscription<geometry_msgs::msg::PoseStamped>(
     "/mavros/local_position/pose", qos,
     [this](const geometry_msgs::msg::PoseStamped & m) {
+      const double t = node_.now().seconds();
       std::lock_guard<std::mutex> lk(mtx_);
       // local -> map
       st_.pos = tf_.toMap({m.pose.position.x, m.pose.position.y, m.pose.position.z});
       st_.yaw = tf_.yawToMap(yawFromQuat(m.pose.orientation));
       st_.has_pose = true;
+      pose_rx_t_ = t;
     }, opts);
 
   vel_sub_ = node_.create_subscription<geometry_msgs::msg::TwistStamped>(
@@ -122,8 +126,12 @@ MavrosVehicle::MavrosVehicle(rclcpp::Node & node, const FrameTransform & tf)
 
 VehicleState MavrosVehicle::state() const
 {
+  const double now = node_.now().seconds();
   std::lock_guard<std::mutex> lk(mtx_);
-  return st_;
+  VehicleState s = st_;
+  s.state_age = state_rx_t_ < 0.0 ? -1.0 : now - state_rx_t_;
+  s.pose_age = pose_rx_t_ < 0.0 ? -1.0 : now - pose_rx_t_;
+  return s;
 }
 
 RequestStatus MavrosVehicle::requestStatus() const

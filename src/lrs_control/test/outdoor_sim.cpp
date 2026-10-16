@@ -12,8 +12,10 @@
 //   nohome    home nepride -> pociatok z GPS fixu po home_wait (DONE)
 //   nogps     GPS sa nikdy nechyti -> NEARMUJE, po 30 s koniec testu
 //   geofence  POI 50 m daleko -> NEVZLIETA
-//   rc        pilot prepne na stvorci na LOITER -> ABORT bez prikazu LAND
+//   rc        pilot prepne na stvorci na LOITER -> ABORT, nic neprikazuje, ziadne setpointy
 //   abort     sluzba ~/abort v polovici osmicky -> ABORT + LAND na mieste
+//   abortrtl  ako abort, ale abort_mode RTL -> navrat nad home a pristatie (ArduPilot)
+//   linkloss  MAVROS spadne na osmicke -> ABORT, nic sa neposiela
 #include <cstdio>
 #include <iostream>
 #include <set>
@@ -26,33 +28,19 @@
 using namespace lrs_control;
 using State = OutdoorExecutor::State;
 
-// pocita poziadavky o LAND (mod aj cmd/land), aby sa dalo overit "nebojovat s pilotom"
-class CountingSim : public SimVehicle
-{
-public:
-  using SimVehicle::SimVehicle;
-  void requestMode(const std::string & m) override
-  {
-    if (m == "LAND") {++land_requests;}
-    SimVehicle::requestMode(m);
-  }
-  void requestLand() override {++land_requests; SimVehicle::requestLand();}
-  int land_requests{0};
-};
-
 int main(int argc, char ** argv)
 {
   const std::string sc = argc > 1 ? argv[1] : "normal";
   const std::set<std::string> known{"normal", "noff", "noramp", "fast", "toofast", "setpoint",
-    "latlon", "nohome", "nogps", "geofence", "rc", "abort"};
+    "latlon", "nohome", "nogps", "geofence", "rc", "abort", "abortrtl", "linkloss"};
   if (!known.count(sc)) {
     std::cerr << "usage: outdoor_sim [normal|noff|noramp|fast|toofast|setpoint|latlon|nohome|"
-      "nogps|geofence|rc|abort]\n";
+      "nogps|geofence|rc|abort|abortrtl|linkloss]\n";
     return 1;
   }
 
   // EKF origin v SITL nie je presne na mieste spawnu -> launch mierne mimo (0, 0)
-  CountingSim veh({0.4, -0.3, 0.0});
+  SimVehicle veh({0.4, -0.3, 0.0});
   const LatLonAlt home{48.15144444, 17.07375000, 150.0};   // fei_lrs_outdoor.world
   veh.enableGps(home, sc == "nogps" ? 1e9 : 2.0, sc == "nohome" ? -1.0 : 4.0);
 
@@ -70,6 +58,7 @@ int main(int argc, char ** argv)
   if (sc == "noramp") {p.fig8_ramp = 0.0;}
   if (sc == "fast") {p.fig8_omega = 0.35;}
   if (sc == "toofast") {p.fig8_omega = 0.40;}
+  if (sc == "abortrtl") {p.abort_mode = "RTL";}
 
   OutdoorExecutor ex(veh, p, [&veh](OutdoorExecutor::LogLevel l, const std::string & m) {
       const char * tag = l == OutdoorExecutor::LogLevel::Error ? "ERROR" :
@@ -82,6 +71,7 @@ int main(int argc, char ** argv)
   double hold_t0 = -1.0, max_z = 0.0, max_hold_err = 0.0, max_r = 0.0;
   bool injected = false;
   int land_req_at_inject = 0;
+  long sp_at_inject = 0;   // pocet setpointov pri vstupe do ABORT
 
   while (veh.t() < t_end && !ex.finished()) {
     veh.step(dt);
@@ -98,14 +88,26 @@ int main(int argc, char ** argv)
     // pilot uprostred stvorca (po W2), abort v polovici osmicky
     if (!injected && sc == "rc" && ex.state() == State::SQUARE && ex.cornersReached() >= 2) {
       injected = true;
-      land_req_at_inject = veh.land_requests;
       std::printf("SIM   pilot prepol z RC na LOITER\n");
       veh.forceMode("LOITER");
     }
-    if (!injected && sc == "abort" && ex.state() == State::FIG8 && ex.fig8Stats().n > 280) {
+    if (!injected && (sc == "abort" || sc == "abortrtl" || sc == "linkloss") &&
+      ex.state() == State::FIG8 && ex.fig8Stats().n > 280)
+    {
       injected = true;
-      std::printf("SIM   volanie ~/abort\n");
-      ex.abort("abort cez sluzbu ~/abort");
+      if (sc == "linkloss") {
+        std::printf("SIM   MAVROS spadol\n");
+        veh.dropLink();
+      } else {
+        std::printf("SIM   volanie ~/abort\n");
+        ex.abort("abort cez sluzbu ~/abort");
+      }
+    }
+    // setpointy a LAND poziadavky od vstupu do ABORT
+    // (po strate spojenia ide ABORT az po pose_timeout)
+    if (ex.state() == State::ABORT && sp_at_inject == 0) {
+      sp_at_inject = veh.setpoints();
+      land_req_at_inject = veh.landRequests();
     }
   }
   // ABORT: este 60 s simulovat (pristatie po abort, resp. ze po RC nic neposiela)
@@ -125,7 +127,12 @@ int main(int argc, char ** argv)
     "E %.2f..%.2f N %.2f..%.2f\n", fs.done ? "hotova" : "NEDOKONCENA", fs.track_max,
     fs.trackRms(), fs.yaw_max_deg, fs.yawRmsDeg(), fs.x_min, fs.x_max, fs.y_min, fs.y_max);
   std::printf("    koniec: mod %s armed %d, poloha (%.2f, %.2f, %.2f), LAND poziadaviek %d\n",
-    st.mode.c_str(), st.armed, st.pos.x, st.pos.y, st.pos.z, veh.land_requests);
+    st.mode.c_str(), st.armed, st.pos.x, st.pos.y, st.pos.z, veh.landRequests());
+  const long sp_after = veh.setpoints() - sp_at_inject;
+  if (injected) {
+    std::printf("    po ABORT: setpointov %ld, LAND poziadaviek %d, finished %d\n",
+      sp_after, veh.landRequests() - land_req_at_inject, ex.finished());
+  }
 
   bool ok = false;
   // tvar osmicky: +-A vo vychode, +-A/2 v severe (zrkadlova by mala rovnaky obal,
@@ -144,12 +151,16 @@ int main(int argc, char ** argv)
     ok = ex.state() == State::WAIT_GPS && !st.armed && max_z == 0.0;
   } else if (sc == "geofence" || sc == "toofast") {
     ok = ex.state() == State::ABORT && !st.armed && max_z == 0.0;
-  } else if (sc == "rc") {
-    // po prevzati pilotom ziadna poziadavka o LAND a mod ostal LOITER
-    ok = ex.state() == State::ABORT && veh.land_requests == land_req_at_inject &&
-      st.mode == "LOITER";
+  } else if (sc == "rc" || sc == "linkloss") {
+    // nic neprikazovat: ziadna poziadavka o LAND, ziadny setpoint po ABORT,
+    // node sa moze ukoncit
+    ok = ex.state() == State::ABORT && veh.landRequests() == land_req_at_inject &&
+      sp_after == 0 && ex.finished() && (sc == "linkloss" || st.mode == "LOITER");
   } else if (sc == "abort") {
-    ok = ex.state() == State::ABORT && st.mode == "LAND" && !st.armed;
+    ok = ex.state() == State::ABORT && ex.finished() && st.mode == "LAND" && !st.armed;
+  } else if (sc == "abortrtl") {
+    ok = ex.state() == State::ABORT && ex.finished() && !st.armed &&
+      std::hypot(st.pos.x, st.pos.y) < 0.2;   // pristal na home
   }
   std::printf("    VYSLEDOK: %s\n", ok ? "OK" : "CHYBA");
   return ok ? 0 : 2;

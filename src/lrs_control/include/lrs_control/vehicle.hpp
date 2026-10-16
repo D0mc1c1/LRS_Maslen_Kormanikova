@@ -33,7 +33,30 @@ struct VehicleState
   double compass_hdg_deg{0.0};  // kompas: 0 = sever, v smere hodin [deg]
   bool has_home{false};
   LatLonAlt home{};             // z /mavros/home_position/home
+
+  // --- zivost spojenia (A1.3 cast 5) -------------------------------------
+  // Vek poslednej spravy [s], -1 = este neprisla. Ak MAVROS spadne, `connected`
+  // ostane na poslednej hodnote, ale tieto casy rastu.
+  double state_age{-1.0};       // /mavros/state (MAVROS ho posiela ~1 Hz)
+  double pose_age{-1.0};        // /mavros/local_position/pose
 };
+
+// Je spojenie s dronom zive? FCU pripojene k MAVROS a spravy z MAVROS chodia.
+inline bool linkOk(const VehicleState & st, double state_timeout, double pose_timeout,
+  std::string & why)
+{
+  if (st.state_age < 0.0 || st.state_age > state_timeout) {
+    why = "/mavros/state neprislo " + std::to_string(st.state_age).substr(0, 4) + " s (MAVROS bezi?)";
+    return false;
+  }
+  if (!st.connected) {why = "MAVROS hlasi connected=false (FCU odpojene)"; return false;}
+  if (st.pose_age < 0.0 || st.pose_age > pose_timeout) {
+    why = "/mavros/local_position/pose neprislo " + std::to_string(st.pose_age).substr(0, 4) + " s";
+    return false;
+  }
+  why = "OK";
+  return true;
+}
 
 // Je GPS pouzitelne na vzlet? Ak nie, `why` povie preco.
 //  - fix aspon STATUS_FIX (0)

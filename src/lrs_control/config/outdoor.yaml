@@ -66,3 +66,15 @@
     fig8_rotation_deg: 0.0            # [deg] otocenie dlhej osi od vychodu (ENU, CCW)
     fig8_max_speed: 1.5               # [m/s] A*omega*sqrt(2) nad limitom -> NEVZLIETA
     max_track_err: 1.5                # [m] odchylka od setpointu na osmicke -> ABORT + LAND
+
+    # --- A1.3 cast 5: abort a strata spojenia ------------------------------------
+    # ros2 service call /outdoor_mission/abort std_srvs/srv/Trigger  -> prepne do abort_mode
+    # (aj chyba misie: timeout, odchylka od osmicky). Ked ArduPilot mod potvrdi, node skonci.
+    #   LAND   pristatie na mieste (predvolene, najkratsia cesta k zemi)
+    #   RTL    navrat na home a pristatie; POZOR: najprv stupa na RTL_ALT (default 15 m)
+    #   BRAKE / LOITER  zastavit a visiet, dalej pilot
+    # Pilot prepne mod z RC / disarm vo vzduchu / strata spojenia -> program prestane
+    # posielat setpointy a NIC neprikazuje (nebojuje s pilotom), node skonci.
+    abort_mode: "LAND"
+    state_timeout: 3.0                # [s] /mavros/state chodi ~1 Hz
+    pose_timeout: 1.0                 # [s] /mavros/local_position/pose
