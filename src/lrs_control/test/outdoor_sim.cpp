@@ -16,7 +16,11 @@
 //   abort     sluzba ~/abort v polovici osmicky -> ABORT + LAND na mieste
 //   abortrtl  ako abort, ale abort_mode RTL -> navrat nad home a pristatie (ArduPilot)
 //   linkloss  MAVROS spadne na osmicke -> ABORT, nic sa neposiela
+//
+// SIM_CSV=subor.csv -> zaznam letu (20 Hz) v rovnakom tvare, aky cita plot_outdoor.py --csv
 #include <cstdio>
+#include <cstdlib>
+#include <fstream>
 #include <iostream>
 #include <set>
 #include <string>
@@ -66,6 +70,13 @@ int main(int argc, char ** argv)
       std::printf("%s %s\n", tag, m.c_str());
     });
 
+  std::ofstream csv;
+  if (const char * f = std::getenv("SIM_CSV")) {
+    csv.open(f);
+    csv << "t,phase,x,y,z,yaw,sp_valid,sp_x,sp_y,sp_z,sp_yaw,poi_x,poi_y,rel_alt\n";
+  }
+  long sp_count_csv = 0;
+
   const double dt = 0.05;
   const double t_end = sc == "nogps" ? 30.0 : 300.0;
   double hold_t0 = -1.0, max_z = 0.0, max_hold_err = 0.0, max_r = 0.0;
@@ -78,6 +89,16 @@ int main(int argc, char ** argv)
     ex.tick(veh.t());
     const auto st = veh.state();
     max_z = std::max(max_z, st.pos.z);
+    if (csv.is_open() && ex.hasOrigin()) {
+      const auto & sp = veh.lastSetpoint();
+      const bool sp_valid = veh.setpoints() != sp_count_csv;   // v tomto ticku poslany setpoint
+      sp_count_csv = veh.setpoints();
+      char b[320];
+      std::snprintf(b, sizeof(b), "%.3f,%s,%.4f,%.4f,%.4f,%.5f,%d,%.4f,%.4f,%.4f,%.5f,%.4f,%.4f,%.4f\n",
+        veh.t(), ex.phase().c_str(), st.pos.x, st.pos.y, st.pos.z, st.yaw, sp_valid ? 1 : 0,
+        sp.p.x, sp.p.y, sp.p.z, sp.yaw, ex.poi().x, ex.poi().y, st.rel_alt);
+      csv << b;
+    }
     max_r = std::max(max_r, distXY(st.pos, ex.launch()));
 
     if (ex.state() == State::HOLD) {

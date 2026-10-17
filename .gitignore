@@ -5,3 +5,5 @@ src/mt_executor_demo
 *.db3
 *.mcap
 .vscode/
+__pycache__/
+*.pyc

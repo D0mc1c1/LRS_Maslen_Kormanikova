@@ -91,6 +91,7 @@ public:
   void sendTrajectorySetpoint(const TrajectorySetpoint & sp) override
   {
     ++setpoints_;
+    last_sp_ = sp;
     if (link_down_) {return;}
     if (s_.mode == "GUIDED" && s_.armed && airborne_) {
       target_ = sp.p;
@@ -169,6 +170,7 @@ public:
 
   long setpoints() const {return setpoints_;}
   int landRequests() const {return land_requests_;}
+  const TrajectorySetpoint & lastSetpoint() const {return last_sp_;}
   double t() const {return t_;}
 
 private:
@@ -193,6 +195,7 @@ private:
   bool link_down_{false};
   double link_t_{0.0};
   int land_requests_{0};
+  TrajectorySetpoint last_sp_;
   LocalTangentPlane ltp_;
   double gps_after_{0}, home_after_{-1};
 };

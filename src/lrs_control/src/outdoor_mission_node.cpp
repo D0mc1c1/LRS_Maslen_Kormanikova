@@ -12,6 +12,15 @@
 // vypocita t = omega * (now - t_start) a z rovnic novy setpoint (poloha, rychlost, yaw).
 // Ramec: MAVROS local ENU bez transformacie (FrameTransform{} = identita).
 //
+// Zaznam a RViz (cast 6), frame "map" = MAVROS local ENU:
+//   /lrs/outdoor/state   std_msgs/String       faza misie pri kazdej zmene (SQUARE:1, FIG8, ...)
+//   /lrs/outdoor/poi     geometry_msgs/PointStamped   POI (latched)
+//   /lrs/outdoor/plan    nav_msgs/Path         planovana trasa (latched)
+//   /lrs/outdoor/markers visualization_msgs/MarkerArray  POI, rohy, miesto vzletu (latched)
+//   /lrs/outdoor/flown   nav_msgs/Path         preletena trasa (5 Hz)
+// Prikazana trajektoria = /mavros/setpoint_raw/local (to, co posielame), skutocna =
+// /mavros/local_position/pose. Graf: scripts/plot_outdoor.py <bag>.
+//
 // Vlakna rovnako ako indoor_mission:
 //   control_group : riadiaci timer + sluzba ~/abort (OutdoorExecutor len odtialto)
 //   sensor_group  : odbery MAVROS tem (MavrosVehicle)
@@ -21,9 +30,13 @@
 #include <memory>
 #include <string>
 
+#include <geometry_msgs/msg/point_stamped.hpp>
+#include <nav_msgs/msg/path.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp/version.h>
+#include <std_msgs/msg/string.hpp>
 #include <std_srvs/srv/trigger.hpp>
+#include <visualization_msgs/msg/marker_array.hpp>
 
 #include "lrs_control/geo.hpp"
 #include "lrs_control/geometry.hpp"
@@ -121,6 +134,17 @@ public:
         }
       });
 
+    // zaznam a RViz
+    const auto latched = rclcpp::QoS(rclcpp::KeepLast(1)).reliable().transient_local();
+    state_pub_ = create_publisher<std_msgs::msg::String>("/lrs/outdoor/state",
+        rclcpp::QoS(rclcpp::KeepLast(20)).reliable().transient_local());
+    poi_pub_ = create_publisher<geometry_msgs::msg::PointStamped>("/lrs/outdoor/poi", latched);
+    plan_pub_ = create_publisher<nav_msgs::msg::Path>("/lrs/outdoor/plan", latched);
+    markers_pub_ = create_publisher<visualization_msgs::msg::MarkerArray>("/lrs/outdoor/markers",
+        latched);
+    flown_pub_ = create_publisher<nav_msgs::msg::Path>("/lrs/outdoor/flown", 10);
+    flown_.header.frame_id = "map";
+
     control_group_ = create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
     control_timer_ = create_wall_timer(
       std::chrono::duration<double>(1.0 / rate), [this]() {controlTick();}, control_group_);
@@ -154,6 +178,7 @@ private:
   {
     const double t = now().seconds();
     executor_->tick(t);
+    publishRecord();
     if (t - last_status_ >= status_period_) {
       last_status_ = t;
       printStatus();
@@ -164,6 +189,113 @@ private:
         OutdoorExecutor::name(executor_->state()));
       rclcpp::shutdown();
     }
+  }
+
+  // faza misie pri zmene, POI + plan raz (ked je znamy pociatok), preletena trasa 5 Hz
+  void publishRecord()
+  {
+    const std::string ph = executor_->phase();
+    if (ph != last_phase_) {
+      last_phase_ = ph;
+      std_msgs::msg::String m;
+      m.data = ph;
+      state_pub_->publish(m);
+    }
+    if (!plan_published_ && executor_->hasOrigin() && !executor_->square().empty()) {
+      plan_published_ = true;
+      publishPlan();
+    }
+    if (++viz_tick_ % 4 != 0) {
+      return;
+    }
+    const auto st = vehicle_->state();
+    const bool flying = st.armed && st.has_pose;
+    if (!flying || flown_.poses.size() > 20000) {
+      return;
+    }
+    geometry_msgs::msg::PoseStamped ps;
+    ps.header.frame_id = "map";
+    ps.header.stamp = now();
+    ps.pose.position.x = st.pos.x;
+    ps.pose.position.y = st.pos.y;
+    ps.pose.position.z = st.pos.z;
+    ps.pose.orientation.z = std::sin(st.yaw / 2.0);
+    ps.pose.orientation.w = std::cos(st.yaw / 2.0);
+    flown_.header.stamp = ps.header.stamp;
+    flown_.poses.push_back(ps);
+    flown_pub_->publish(flown_);
+  }
+
+  void publishPlan()
+  {
+    const auto stamp = now();
+    const auto & poi = executor_->poi();
+    geometry_msgs::msg::PointStamped pm;
+    pm.header.frame_id = "map";
+    pm.header.stamp = stamp;
+    pm.point.x = poi.x;
+    pm.point.y = poi.y;
+    pm.point.z = poi.z;
+    poi_pub_->publish(pm);
+
+    nav_msgs::msg::Path path;
+    path.header = pm.header;
+    for (const auto & p : executor_->plannedPath()) {
+      geometry_msgs::msg::PoseStamped ps;
+      ps.header = pm.header;
+      ps.pose.position.x = p.x;
+      ps.pose.position.y = p.y;
+      ps.pose.position.z = p.z;
+      ps.pose.orientation.w = 1.0;
+      path.poses.push_back(ps);
+    }
+    plan_pub_->publish(path);
+
+    visualization_msgs::msg::MarkerArray ma;
+    auto mk = [&](int id, int type, double r, double g, double b) {
+        visualization_msgs::msg::Marker m;
+        m.header = pm.header;
+        m.ns = "outdoor";
+        m.id = id;
+        m.type = type;
+        m.action = visualization_msgs::msg::Marker::ADD;
+        m.pose.orientation.w = 1.0;
+        m.color.r = r;
+        m.color.g = g;
+        m.color.b = b;
+        m.color.a = 1.0;
+        return m;
+      };
+    auto poi_m = mk(0, visualization_msgs::msg::Marker::SPHERE, 1.0, 0.2, 0.2);
+    poi_m.pose.position = pm.point;
+    poi_m.scale.x = poi_m.scale.y = poi_m.scale.z = 0.4;
+    ma.markers.push_back(poi_m);
+    const auto & l = executor_->launch();
+    auto launch_m = mk(1, visualization_msgs::msg::Marker::CYLINDER, 0.2, 0.6, 1.0);
+    launch_m.pose.position.x = l.x;
+    launch_m.pose.position.y = l.y;
+    launch_m.pose.position.z = l.z + 0.05;
+    launch_m.scale.x = launch_m.scale.y = 0.6;
+    launch_m.scale.z = 0.1;
+    ma.markers.push_back(launch_m);
+    const auto & sq = executor_->square();
+    for (std::size_t i = 0; i + 1 < sq.size(); ++i) {   // W1..W4 (posledny = W1)
+      auto t = mk(10 + static_cast<int>(i), visualization_msgs::msg::Marker::TEXT_VIEW_FACING,
+          1.0, 1.0, 1.0);
+      t.pose.position.x = sq[i].x;
+      t.pose.position.y = sq[i].y;
+      t.pose.position.z = sq[i].z + 0.4;
+      t.scale.z = 0.4;
+      t.text = "W" + std::to_string(i + 1);
+      ma.markers.push_back(t);
+    }
+    auto poi_t = mk(20, visualization_msgs::msg::Marker::TEXT_VIEW_FACING, 1.0, 0.4, 0.4);
+    poi_t.pose.position = pm.point;
+    poi_t.pose.position.z += 0.6;
+    poi_t.scale.z = 0.4;
+    poi_t.text = "POI";
+    ma.markers.push_back(poi_t);
+    markers_pub_->publish(ma);
   }
 
   // stav, poloha od miesta vzletu, rel_alt, lat/lon, kurz v oboch konvenciach, chyba na POI
@@ -193,6 +325,15 @@ private:
   rclcpp::TimerBase::SharedPtr control_timer_;
   rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr abort_srv_;
   std::string abort_mode_;
+  rclcpp::Publisher<std_msgs::msg::String>::SharedPtr state_pub_;
+  rclcpp::Publisher<geometry_msgs::msg::PointStamped>::SharedPtr poi_pub_;
+  rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr plan_pub_;
+  rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr markers_pub_;
+  rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr flown_pub_;
+  nav_msgs::msg::Path flown_;
+  std::string last_phase_;
+  bool plan_published_{false};
+  unsigned viz_tick_{0};
   double status_period_{2.0};
   double last_status_{0.0};
   bool finished_{false};

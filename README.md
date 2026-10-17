@@ -108,3 +108,25 @@ ros2 service call /indoor_mission/abort std_srvs/srv/Trigger
 ros2 run lrs_control outdoor_sim rc          # aj: abort abortrtl linkloss
 SIM_RC=30 ros2 run lrs_control mission_sim src/lrs_control/missions/test_open.csv   # aj SIM_ABORT, SIM_LINK
 ```
+
+### Časť 6: rosbag a graf preletenej vs. prikázanej trasy
+
+`outdoor_mission` publikuje fázu misie (`/lrs/outdoor/state`), POI, plánovanú trasu,
+značky a preletenú trasu (`/lrs/outdoor/*`, frame `map` = MAVROS local ENU). Prikázaná
+trajektória je `/mavros/setpoint_raw/local`, skutočná `/mavros/local_position/pose`.
+
+```bash
+# terminál 4: záznam (spustiť PRED misiou, Ctrl+C po pristátí)
+ros2 run lrs_control record_outdoor.sh ~/lrs_bags/outdoor_run1
+# terminál 5: misia
+ros2 run lrs_control outdoor_mission --ros-args --params-file src/lrs_control/config/outdoor.yaml
+# RViz (voliteľne)
+rviz2 -d src/lrs_control/rviz/outdoor.rviz
+# graf + súhrn (chyba na POI, odchýlka osmičky, yaw vs. tangenta, rozmery, geofence)
+ros2 run lrs_control plot_outdoor.py ~/lrs_bags/outdoor_run1
+# bez Gazeba: záznam z offline simulácie
+SIM_CSV=/tmp/sim.csv ros2 run lrs_control outdoor_sim normal && ros2 run lrs_control plot_outdoor.py --csv /tmp/sim.csv
+```
+
+Výstup: `outdoor_xy.png` (pohľad zhora + detail osmičky), `outdoor_poi.png`,
+`outdoor_fig8.png`, `outdoor_alt.png` v adresári bagu.

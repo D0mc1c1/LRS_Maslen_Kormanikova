@@ -1,0 +1,115 @@
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+    Property Tree Widget:
+      Expanded: ~
+      Splitter Ratio: 0.5
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Class: rviz_default_plugins/Grid
+      Name: Grid
+      Enabled: true
+      Value: true
+      Cell Size: 1
+      Plane Cell Count: 20
+      Color: 160; 160; 164
+      Alpha: 0.5
+      Offset:
+        X: 0
+        Y: 4
+        Z: 0
+      Reference Frame: <Fixed Frame>
+    - Class: rviz_default_plugins/Path
+      Name: Planovana trasa
+      Enabled: true
+      Value: true
+      Color: 235; 104; 52
+      Alpha: 1
+      Line Style: Lines
+      Line Width: 0.03
+      Buffer Length: 1
+      Pose Style: None
+      Topic:
+        Depth: 1
+        Durability Policy: Transient Local
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /lrs/outdoor/plan
+    - Class: rviz_default_plugins/Path
+      Name: Preletena trasa
+      Enabled: true
+      Value: true
+      Color: 42; 120; 214
+      Alpha: 1
+      Line Style: Lines
+      Line Width: 0.03
+      Buffer Length: 1
+      Pose Style: None
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /lrs/outdoor/flown
+    - Class: rviz_default_plugins/MarkerArray
+      Name: POI a rohy
+      Enabled: true
+      Value: true
+      Namespaces: {}
+      Topic:
+        Depth: 1
+        Durability Policy: Transient Local
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /lrs/outdoor/markers
+    - Class: rviz_default_plugins/Pose
+      Name: Dron
+      Enabled: true
+      Value: true
+      Color: 42; 120; 214
+      Alpha: 1
+      Shape: Arrow
+      Shaft Length: 0.8
+      Shaft Radius: 0.05
+      Head Length: 0.3
+      Head Radius: 0.12
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Best Effort
+        Value: /mavros/local_position/pose
+  Enabled: true
+  Global Options:
+    Background Color: 48; 48; 48
+    Fixed Frame: map
+    Frame Rate: 30
+  Name: root
+  Tools:
+    - Class: rviz_default_plugins/Interact
+      Hide Inactive Objects: true
+    - Class: rviz_default_plugins/MoveCamera
+    - Class: rviz_default_plugins/Select
+    - Class: rviz_default_plugins/FocusCamera
+    - Class: rviz_default_plugins/Measure
+      Line color: 128; 128; 0
+  Value: true
+  Views:
+    Current:
+      Class: rviz_default_plugins/Orbit
+      Name: Current View
+      Target Frame: <Fixed Frame>
+      Value: Orbit (rviz)
+      Distance: 18
+      Focal Point:
+        X: 0
+        Y: 4
+        Z: 2
+      Pitch: 0.9
+      Yaw: 4.2
+      Near Clip Distance: 0.01
+    Saved: ~
+Window Geometry:
+  Height: 900
+  Width: 1500

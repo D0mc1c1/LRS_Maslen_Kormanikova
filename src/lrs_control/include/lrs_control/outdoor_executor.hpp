@@ -114,6 +114,9 @@ public:
   void abort(const std::string & why);
 
   State state() const {return state_;}
+  // stav pre zaznam (rosbag, CSV): nazov stavu, na stvorci aj index useku
+  // "SQUARE:0" = presun na W1, "SQUARE:1".."SQUARE:4" = strany W1-W2 ... W4-W1
+  std::string phase() const;
   // Hotovo = DONE, alebo ABORT, v ktorom uz nie je co prikazat (mod potvrdeny,
   // dron na zemi, alebo riadenie prevzal pilot). Potom sa node moze ukoncit.
   bool finished() const
@@ -127,6 +130,9 @@ public:
   const LocalTangentPlane & origin() const {return ltp_;}
   const Vec3 & launch() const {return launch_;}
   const Vec3 & poi() const {return poi_;}
+  const std::vector<Vec3> & square() const {return square_;}   // W1, W2, W3, W4, W1
+  // cela planovana trasa (vzlet, stvorec, osmicka, navrat), na zobrazenie a graf
+  std::vector<Vec3> plannedPath() const;
 
   // prevod geodeticke <-> MAVROS local (po WAIT_ORIGIN)
   Vec3 llaToLocal(const LatLonAlt & g) const;

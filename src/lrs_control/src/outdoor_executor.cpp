@@ -113,6 +113,36 @@ void OutdoorExecutor::tick(double now)
   }
 }
 
+std::string OutdoorExecutor::phase() const
+{
+  std::string s = name(state_);
+  if (state_ == State::SQUARE) {
+    s += ":" + std::to_string(leg_i_);
+  }
+  return s;
+}
+
+std::vector<Vec3> OutdoorExecutor::plannedPath() const
+{
+  std::vector<Vec3> path;
+  if (!ltp_.valid() || square_.empty()) {
+    return path;
+  }
+  const Vec3 above{launch_.x, launch_.y, launch_.z + p_.altitude};
+  path.push_back(launch_);
+  path.push_back(above);
+  for (const auto & w : square_) {
+    path.push_back(w);
+  }
+  const int n = static_cast<int>(std::ceil(p_.fig8_laps * 360.0));
+  for (int k = 0; k <= n; ++k) {
+    path.push_back(fig8_.posAt(deg2rad(k)));
+  }
+  path.push_back(above);
+  path.push_back(launch_);
+  return path;
+}
+
 void OutdoorExecutor::enter(State s, const std::string & why)
 {
   char head[64];

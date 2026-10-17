@@ -72,7 +72,7 @@ add_executable(outdoor_mission
 )
 target_link_libraries(outdoor_mission lrs_control_core)
 ament_target_dependencies(outdoor_mission rclcpp mavros_msgs geometry_msgs sensor_msgs
-  std_msgs std_srvs)
+  std_msgs std_srvs nav_msgs visualization_msgs)
 
 # ---- A1.3: offline test outdoor automatu (bez ROS) ---------------------------
 add_executable(outdoor_sim test/outdoor_sim.cpp)
@@ -83,5 +83,8 @@ install(TARGETS indoor_mission mission_sim plan_viz gps_info geo_test
   outdoor_mission outdoor_sim
   DESTINATION lib/${PROJECT_NAME})
 install(DIRECTORY config missions rviz DESTINATION share/${PROJECT_NAME})
+# A1.3 cast 6: zaznam letu a graf (ros2 run lrs_control record_outdoor.sh / plot_outdoor.py)
+install(PROGRAMS scripts/record_outdoor.sh scripts/plot_outdoor.py
+  DESTINATION lib/${PROJECT_NAME})
 
 ament_package()
