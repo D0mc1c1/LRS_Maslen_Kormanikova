@@ -33,6 +33,7 @@
     yaw_tol_deg: 5.0                 # [deg] tolerancia uhla
     yaw_hold_time: 1.0               # [s] yawN: tak dlho drzat uhol
     min_leg_xy: 0.20                 # [m] kratsi usek je zvisly, yaw sa nemeni
+    turn_stop_deg: 60.0              # [deg] ostrejsia zakruta -> najprv otocit na mieste (180 = vypnute)
 
     # --- vzlet, pristatie, timeouty ---
     takeoff_tol: 0.15                # [m] vzlet hotovy pri z >= ciel - 0.15

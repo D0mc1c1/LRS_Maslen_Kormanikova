@@ -401,8 +401,9 @@ void MissionExecutor::beginSegment(const VehicleState & st)
   const std::string info = "-> WP" + std::to_string(wp_idx_ + 1) + " " +
     describe(mission_[wp_idx_]) + ", " + std::to_string(path.size()) + " bodov";
 
-  // Otocenie na mieste pred zaciatkom letu ak je potrebne
-  if (stopped_ && err > deg2rad(p_.yaw_tol_deg)) {
+  // Otocenie na mieste pred zaciatkom letu ak je potrebne:
+  // dron stoji (hard bod, vzlet, yaw uloha), alebo je zakruta ostra aj po soft bode
+  if ((stopped_ && err > deg2rad(p_.yaw_tol_deg)) || err > deg2rad(p_.turn_stop_deg)) {
     enter(State::ROTATE, info + ", otocenie o " + fmt("%.0f", rad2deg(err)) + " deg");
   } else {
     enter(State::NAVIGATE, info);
@@ -475,6 +476,19 @@ void MissionExecutor::onNavigate(const VehicleState & st, double now)
     ++path_idx_;
     log(LogLevel::Info, "  medzibod " + std::to_string(path_idx_ - 1) + "/" +
       std::to_string(last - 1) + " " + pt(target) + " preleteny");
+
+    // Ostra zakruta v medzibode: zastavit v nom a otocit sa na mieste,
+    // aby dron neletel dalsi usek bokom (nos vzdy v smere letu)
+    if (const auto ny = legYaw(path_idx_)) {
+      const double turn = std::abs(angleDiff(*ny, st.yaw));
+      if (turn > deg2rad(p_.turn_stop_deg)) {
+        hold_pos_ = target;
+        yaw_sp_ = unwrapNear(*ny, st.yaw);
+        enter(State::ROTATE, "zakruta " + fmt("%.0f", rad2deg(turn)) +
+          " deg v medzibode, otocenie na mieste");
+        return;
+      }
+    }
   }
 
   // Kontrola casoveho limitu segmentu

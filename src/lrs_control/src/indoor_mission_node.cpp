@@ -65,6 +65,7 @@ public:
     p.yaw_tol_deg = declare_parameter("yaw_tol_deg", p.yaw_tol_deg);
     p.yaw_hold_time = declare_parameter("yaw_hold_time", p.yaw_hold_time);
     p.min_leg_xy = declare_parameter("min_leg_xy", p.min_leg_xy);
+    p.turn_stop_deg = declare_parameter("turn_stop_deg", p.turn_stop_deg);
     p.takeoff_tol = declare_parameter("takeoff_tol", p.takeoff_tol);
     p.landtakeoff_wait = declare_parameter("landtakeoff_wait", p.landtakeoff_wait);
     p.arm_timeout = declare_parameter("arm_timeout", p.arm_timeout);

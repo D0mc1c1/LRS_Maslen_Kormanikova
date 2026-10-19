@@ -27,6 +27,7 @@ struct ExecutorParams
   double yaw_task_offset_deg{0.0};  // yawN v map frame = N + offset (0 = uhly v map frame)
   double rotate_settle{0.3};   // otocenie pred segmentom: drzat tolko sekund
   double min_leg_xy{0.20};     // kratsi usek v XY = vertikalny, yaw sa nemeni
+  double turn_stop_deg{60.0};  // zakruta ostrejsia ako toto -> najprv otocit na mieste, potom letiet
 
   // vzlet / pristatie
   double takeoff_tol{0.15};    // vzlet hotovy ked z >= ciel - takeoff_tol
