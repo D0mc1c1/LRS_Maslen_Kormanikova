@@ -11,7 +11,8 @@ using mavros_msgs::msg::PositionTarget;
 
 namespace
 {
-// Humble (rclcpp 16) ma create_client s rmw_qos_profile_t, Jazzy (28+) s rclcpp::QoS
+// Vyberie sposob vytvorenia klienta podla verzie ROS2
+// Humble a Jazzy pouzivaju odlisne rozhranie pre QoS sluzieb
 template<class SrvT>
 typename rclcpp::Client<SrvT>::SharedPtr makeClient(
   rclcpp::Node & node, const std::string & name, rclcpp::CallbackGroup::SharedPtr group)
@@ -23,15 +24,18 @@ typename rclcpp::Client<SrvT>::SharedPtr makeClient(
 #endif
 }
 
+// Vypocita yaw z orientacie vyjadrenej kvaternionom
 double yawFromQuat(const geometry_msgs::msg::Quaternion & q)
 {
   return std::atan2(2.0 * (q.w * q.z + q.x * q.y), 1.0 - 2.0 * (q.y * q.y + q.z * q.z));
 }
-}  // namespace
+}
 
+// Pripravi odbery publikovanie a klientov sluzieb MAVROS
 MavrosVehicle::MavrosVehicle(rclcpp::Node & node, const FrameTransform & tf)
 : node_(node), tf_(tf)
 {
+  // Oddeli spracovanie senzorov od sluzieb
   sensor_group_ = node_.create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
   service_group_ = node_.create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
 
@@ -40,6 +44,7 @@ MavrosVehicle::MavrosVehicle(rclcpp::Node & node, const FrameTransform & tf)
   // SensorDataQoS = best effort: prijme spravy od reliable aj best-effort publishera
   const auto qos = rclcpp::SensorDataQoS();
 
+  // Sleduje stav spojenia rezim a armovanie dronu
   state_sub_ = node_.create_subscription<mavros_msgs::msg::State>(
     "/mavros/state", qos,
     [this](const mavros_msgs::msg::State & m) {
@@ -51,6 +56,7 @@ MavrosVehicle::MavrosVehicle(rclcpp::Node & node, const FrameTransform & tf)
       state_rx_t_ = t;
     }, opts);
 
+  // Nacita polohu a orientaciu a prevedie ich do map frame
   pose_sub_ = node_.create_subscription<geometry_msgs::msg::PoseStamped>(
     "/mavros/local_position/pose", qos,
     [this](const geometry_msgs::msg::PoseStamped & m) {
@@ -63,6 +69,7 @@ MavrosVehicle::MavrosVehicle(rclcpp::Node & node, const FrameTransform & tf)
       pose_rx_t_ = t;
     }, opts);
 
+  // Nacita rychlost a prevedie ju do map frame
   vel_sub_ = node_.create_subscription<geometry_msgs::msg::TwistStamped>(
     "/mavros/local_position/velocity_local", qos,
     [this](const geometry_msgs::msg::TwistStamped & m) {
@@ -71,6 +78,7 @@ MavrosVehicle::MavrosVehicle(rclcpp::Node & node, const FrameTransform & tf)
     }, opts);
 
   // --- A1.3: GPS, home, kompas -------------------------------------------
+  // Nacita GPS polohu stav GPS a odhad horizontalnej presnosti
   gps_sub_ = node_.create_subscription<sensor_msgs::msg::NavSatFix>(
     "/mavros/global_position/global", qos,
     [this](const sensor_msgs::msg::NavSatFix & m) {
@@ -84,7 +92,8 @@ MavrosVehicle::MavrosVehicle(rclcpp::Node & node, const FrameTransform & tf)
       }
     }, opts);
 
-  // pocet satelitov (plugin gps_status; ak MAVROS temu nema, ostane -1 = nezname)
+  // Nacita pocet viditelnych satelitov
+  // Ak MAVROS temu nema hodnota zostane -1
   gps_raw_sub_ = node_.create_subscription<mavros_msgs::msg::GPSRAW>(
     "/mavros/gpsstatus/gps1/raw", qos,
     [this](const mavros_msgs::msg::GPSRAW & m) {
@@ -92,6 +101,7 @@ MavrosVehicle::MavrosVehicle(rclcpp::Node & node, const FrameTransform & tf)
       st_.satellites = m.satellites_visible;
     }, opts);
 
+  // Nacita vysku nad domovskym bodom
   rel_alt_sub_ = node_.create_subscription<std_msgs::msg::Float64>(
     "/mavros/global_position/rel_alt", qos,
     [this](const std_msgs::msg::Float64 & m) {
@@ -100,6 +110,7 @@ MavrosVehicle::MavrosVehicle(rclcpp::Node & node, const FrameTransform & tf)
       st_.rel_alt = m.data;
     }, opts);
 
+  // Nacita smer kompasu v stupnoch
   compass_sub_ = node_.create_subscription<std_msgs::msg::Float64>(
     "/mavros/global_position/compass_hdg", qos,
     [this](const std_msgs::msg::Float64 & m) {
@@ -110,6 +121,7 @@ MavrosVehicle::MavrosVehicle(rclcpp::Node & node, const FrameTransform & tf)
 
   // home MAVROS posiela ako "latched" spravu (reliable + transient_local) len pri zmene.
   // Best-effort/volatile odber by ju po starte nodu nedostal -> rovnake QoS ako publisher.
+  // Nacita domovsku GPS polohu dronu
   home_sub_ = node_.create_subscription<mavros_msgs::msg::HomePosition>(
     "/mavros/home_position/home", rclcpp::QoS(rclcpp::KeepLast(1)).reliable().transient_local(),
     [this](const mavros_msgs::msg::HomePosition & m) {
@@ -118,14 +130,17 @@ MavrosVehicle::MavrosVehicle(rclcpp::Node & node, const FrameTransform & tf)
       st_.home = {m.geo.latitude, m.geo.longitude, m.geo.altitude};
     }, opts);
 
+  // Vytvori publisher cielovych poloh pre riadenie dronu
   sp_pub_ = node_.create_publisher<PositionTarget>("/mavros/setpoint_raw/local", 10);
 
+  // Pripravi sluzby na zmenu rezimu armovanie vzlet a pristatie
   mode_cli_ = makeClient<mavros_msgs::srv::SetMode>(node_, "/mavros/set_mode", service_group_);
   arm_cli_ = makeClient<mavros_msgs::srv::CommandBool>(node_, "/mavros/cmd/arming", service_group_);
   takeoff_cli_ = makeClient<mavros_msgs::srv::CommandTOL>(node_, "/mavros/cmd/takeoff", service_group_);
   land_cli_ = makeClient<mavros_msgs::srv::CommandTOL>(node_, "/mavros/cmd/land", service_group_);
 }
 
+// Vrati aktualny stav dronu aj s vekom poslednych sprav
 VehicleState MavrosVehicle::state() const
 {
   const double now = node_.now().seconds();
@@ -136,12 +151,14 @@ VehicleState MavrosVehicle::state() const
   return s;
 }
 
+// Vrati stav poslednej poziadavky na sluzbu
 RequestStatus MavrosVehicle::requestStatus() const
 {
   std::lock_guard<std::mutex> lk(mtx_);
   return req_status_;
 }
 
+// Spolocne odosle poziadavku sluzbe a spracuje jej odpoved
 template<class SrvT, class OkFn>
 void MavrosVehicle::call(
   const typename rclcpp::Client<SrvT>::SharedPtr & client,
@@ -153,6 +170,7 @@ void MavrosVehicle::call(
     id = ++req_id_;
     req_status_ = RequestStatus::Pending;
   }
+  // Overi ci je sluzba dostupna
   if (!client->service_is_ready()) {
     RCLCPP_WARN(node_.get_logger(), "%s: sluzba %s nie je dostupna (bezi MAVROS?)",
       what.c_str(), client->get_service_name());
@@ -160,6 +178,7 @@ void MavrosVehicle::call(
     req_status_ = RequestStatus::Failed;
     return;
   }
+  // Odosle poziadavku a caka na asynchronnu odpoved
   RCLCPP_INFO(node_.get_logger(), "-> %s", what.c_str());
   client->async_send_request(
     req, [this, id, ok, what](typename rclcpp::Client<SrvT>::SharedFuture f) {
@@ -168,12 +187,14 @@ void MavrosVehicle::call(
         RCLCPP_WARN(node_.get_logger(), "<- %s: ZAMIETNUTE", what.c_str());
       }
       std::lock_guard<std::mutex> lk(mtx_);
+      // Aktualizuje stav iba pre najnovsiu poziadavku
       if (id == req_id_) {
         req_status_ = success ? RequestStatus::Ok : RequestStatus::Failed;
       }
     });
 }
 
+// Poziada autopilota o zmenu letoveho rezimu
 void MavrosVehicle::requestMode(const std::string & mode)
 {
   auto req = std::make_shared<mavros_msgs::srv::SetMode::Request>();
@@ -183,6 +204,7 @@ void MavrosVehicle::requestMode(const std::string & mode)
     [](const mavros_msgs::srv::SetMode::Response & r) {return r.mode_sent;}, "set_mode " + mode);
 }
 
+// Poziada o zapnutie alebo vypnutie motorov
 void MavrosVehicle::requestArm(bool arm)
 {
   auto req = std::make_shared<mavros_msgs::srv::CommandBool::Request>();
@@ -192,17 +214,20 @@ void MavrosVehicle::requestArm(bool arm)
     arm ? "arming true" : "arming false");
 }
 
+// Poziada autopilota o vzlet do zadanej vysky
 void MavrosVehicle::requestTakeoff(double z_map)
 {
   auto req = std::make_shared<mavros_msgs::srv::CommandTOL::Request>();
   req->min_pitch = 0.0f;
   req->yaw = 0.0f;  // ArduPilot ho pri GUIDED takeoffe ignoruje
+  // Prevedie cielovu vysku z map frame do lokalneho systemu
   req->altitude = static_cast<float>(tf_.toLocal({0.0, 0.0, z_map}).z);  // vyska nad home
   call<mavros_msgs::srv::CommandTOL>(takeoff_cli_, req,
     [](const mavros_msgs::srv::CommandTOL::Response & r) {return r.success;},
     "takeoff alt=" + std::to_string(req->altitude));
 }
 
+// Poziada autopilota o pristatie
 void MavrosVehicle::requestLand()
 {
   auto req = std::make_shared<mavros_msgs::srv::CommandTOL::Request>();
@@ -211,6 +236,7 @@ void MavrosVehicle::requestLand()
     [](const mavros_msgs::srv::CommandTOL::Response & r) {return r.success;}, "land");
 }
 
+// Vytvori poziadavku na polohu a yaw
 void MavrosVehicle::sendPositionTarget(const Vec3 & p_map, double yaw)
 {
   TrajectorySetpoint sp;
@@ -219,6 +245,7 @@ void MavrosVehicle::sendPositionTarget(const Vec3 & p_map, double yaw)
   sendTrajectorySetpoint(sp);
 }
 
+// Prevedie cielovy bod na spravu MAVROS a odosle ho dronu
 void MavrosVehicle::sendTrajectorySetpoint(const TrajectorySetpoint & t)
 {
   PositionTarget sp;
@@ -234,22 +261,27 @@ void MavrosVehicle::sendTrajectorySetpoint(const TrajectorySetpoint & t)
   sp.position.x = l.x;
   sp.position.y = l.y;
   sp.position.z = l.z;
+  // Ak je zadana rychlost prevedie ju do lokalneho systemu
   if (t.v) {
     const Vec3 vl = tf_.dirToLocal(*t.v);
     sp.velocity.x = vl.x;
     sp.velocity.y = vl.y;
     sp.velocity.z = vl.z;
   } else {
+    // Oznaci rychlost ako nepouzivanu
     sp.type_mask |= PositionTarget::IGNORE_VX | PositionTarget::IGNORE_VY |
       PositionTarget::IGNORE_VZ;
   }
+  // Prevedie cielovy yaw do lokalneho systemu
   sp.yaw = static_cast<float>(tf_.yawToLocal(t.yaw));
+  // Ak je zadana rychlost otacania nastavi ju
   if (t.yaw_rate) {
     sp.yaw_rate = static_cast<float>(*t.yaw_rate);  // ENU, MAVROS otoci znamienko do NED
   } else {
+    // Oznaci rychlost otacania ako nepouzivanu
     sp.type_mask |= PositionTarget::IGNORE_YAW_RATE;
   }
+  // Odosle cielovu poziadavku do MAVROS
   sp_pub_->publish(sp);
 }
-
-}  // namespace lrs_control
+}

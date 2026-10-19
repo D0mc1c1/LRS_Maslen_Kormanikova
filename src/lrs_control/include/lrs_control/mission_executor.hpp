@@ -47,7 +47,6 @@ struct ExecutorParams
   double pose_timeout{1.0};
 };
 
-// Stavovy automat misie. Neobsahuje ROS -> da sa testovat offline.
 // tick(now) sa vola periodicky (napr. 20 Hz) z riadiaceho timera.
 class MissionExecutor
 {
@@ -178,4 +177,4 @@ private:
   std::vector<Arrival> arrivals_;
 };
 
-}  // namespace lrs_control
+}
