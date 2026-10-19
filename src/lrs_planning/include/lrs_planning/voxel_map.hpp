@@ -14,18 +14,21 @@ class VoxelMap
 public:
   bool load(const std::string & pcd_path, double voxel_size);
 
-  // plny kvader (regal): prekazka bez ohladu na mracno bodov
+  // plny kvader (regal): prekazka
   void addSolidBox(const Vec3 & lo, const Vec3 & hi) {boxes_.push_back({lo, hi});}
 
   bool isOccupied(double x, double y, double z, double safety_radius = 0.0) const;
+
   // len mracno bodov (bez boxov regalov a stropu, bez inflacie) - pre vizualizaciu
   bool isOccupiedCloud(double x, double y, double z) const;
   bool isOccupied(const Vec3 & p, double safety_radius = 0.0) const;
 
+  // min a max suradnice
   std::size_t pointCount() const {return point_count_;}
   Vec3 minBound() const {return min_;}
   Vec3 maxBound() const {return max_;}
 
+  // pocet voxelov v troch smeroch
   double voxelSize() const {return voxel_;}
   size_t gridX() const {return nx_;}
   size_t gridY() const {return ny_;}
@@ -46,4 +49,4 @@ private:
   size_t indexToLinear(int ix, int iy, int iz) const;
 };
 
-}  // namespace lrs_planning
+}

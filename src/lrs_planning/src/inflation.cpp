@@ -18,4 +18,4 @@ bool InflatedMap::isOccupied(const Vec3 & p) const
   return isOccupied(p.x, p.y, p.z);
 }
 
-}  // namespace lrs_planning
+}

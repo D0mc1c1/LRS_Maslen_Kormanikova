@@ -10,16 +10,16 @@
 namespace lrs_planning
 {
 
-// Adapter: A* (planning_algorithm) + line-of-sight zjednodusenie (path_simplifier)
-// za rozhranim Planner, ktore pouziva stavovy automat v lrs_control.
+// adapter: A* (planning_algorithm) + line-of-sight zjednodusenie (path_simplifier)
+// za rozhranim Planner, ktore pouziva stavovy automat v lrs_control
 class AStarPlanner : public Planner
 {
 public:
   struct Box { Vec3 lo, hi; };
 
-  // Nacita mapu a prida plne boxy (regaly). Pri chybe vyhodi std::runtime_error.
-  // max_z = najvyssia povolena vyska STREDU drona [m] (strop letu). Nad regalmi
-  // v mape chybaju body, bez stropu by A* naplanoval let ponad regaly.
+  // nacita mapu a prida plne boxy (regaly)
+  // pri chybe vyhodi std::runtime_error
+  // max_z = najvyssia povolena vyska STREDU drona [m] (strop letu)
   AStarPlanner(
     const std::string & map_path, double voxel_size, double safety_radius,
     const std::vector<Box> & solid_boxes,
@@ -35,4 +35,4 @@ private:
   double radius_;
 };
 
-}  // namespace lrs_planning
+}

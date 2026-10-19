@@ -18,11 +18,14 @@ find_package(geometry_msgs REQUIRED)
 find_package(std_srvs REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(visualization_msgs REQUIRED)
+find_package(sensor_msgs REQUIRED)
+find_package(std_msgs REQUIRED)
 
 # ---- jadro bez ROS: CSV misia + stavovy automat ----------------------------
 add_library(lrs_control_core STATIC
   src/mission.cpp
   src/mission_executor.cpp
+  src/outdoor_executor.cpp
 )
 target_include_directories(lrs_control_core PUBLIC include)
 target_link_libraries(lrs_control_core PUBLIC lrs_planning::lrs_planning)
@@ -35,7 +38,7 @@ add_executable(indoor_mission
 )
 target_link_libraries(indoor_mission lrs_control_core)
 ament_target_dependencies(indoor_mission rclcpp mavros_msgs geometry_msgs std_srvs
-  nav_msgs visualization_msgs)
+  nav_msgs visualization_msgs sensor_msgs std_msgs)
 
 # ---- vizualizacia planu v RViz2 bez simulatora -------------------------------
 add_executable(plan_viz
@@ -47,14 +50,41 @@ ament_target_dependencies(plan_viz rclcpp geometry_msgs visualization_msgs)
 
 # ---- offline test stavoveho automatu (bez ROS, bez simulatora) ----------------
 add_executable(mission_sim test/mission_sim.cpp)
+target_include_directories(mission_sim PRIVATE test)   # sim_vehicle.hpp
 target_link_libraries(mission_sim lrs_control_core)
 
-# ---- A1.3 outdoor misia - odkomentuj vo faze 3 -----------------------------
-# add_executable(outdoor_mission src/outdoor_mission_node.cpp src/mavros_vehicle.cpp)
-# target_link_libraries(outdoor_mission lrs_control_core)
-# ament_target_dependencies(outdoor_mission rclcpp mavros_msgs geometry_msgs sensor_msgs std_srvs)
+# ---- A1.3 cast 1: diagnostika GPS, home a kompasu ----------------------------
+add_executable(gps_info
+  src/gps_info_node.cpp
+  src/mavros_vehicle.cpp
+)
+target_link_libraries(gps_info lrs_control_core)
+ament_target_dependencies(gps_info rclcpp mavros_msgs geometry_msgs sensor_msgs std_msgs)
 
-install(TARGETS indoor_mission mission_sim plan_viz DESTINATION lib/${PROJECT_NAME})
+# ---- A1.3: test prevodu LLA <-> ENU a kompasu (bez ROS) -----------------------
+add_executable(geo_test test/geo_test.cpp)
+target_link_libraries(geo_test lrs_control_core)
+
+# ---- A1.3 cast 2: outdoor misia (ROS node) -------------------------------------
+add_executable(outdoor_mission
+  src/outdoor_mission_node.cpp
+  src/mavros_vehicle.cpp
+)
+target_link_libraries(outdoor_mission lrs_control_core)
+ament_target_dependencies(outdoor_mission rclcpp mavros_msgs geometry_msgs sensor_msgs
+  std_msgs std_srvs nav_msgs visualization_msgs)
+
+# ---- A1.3: offline test outdoor automatu (bez ROS) ---------------------------
+add_executable(outdoor_sim test/outdoor_sim.cpp)
+target_include_directories(outdoor_sim PRIVATE test)
+target_link_libraries(outdoor_sim lrs_control_core)
+
+install(TARGETS indoor_mission mission_sim plan_viz gps_info geo_test
+  outdoor_mission outdoor_sim
+  DESTINATION lib/${PROJECT_NAME})
 install(DIRECTORY config missions rviz DESTINATION share/${PROJECT_NAME})
+# A1.3 cast 6: zaznam letu a graf (ros2 run lrs_control record_outdoor.sh / plot_outdoor.py)
+install(PROGRAMS scripts/record_outdoor.sh scripts/plot_outdoor.py
+  DESTINATION lib/${PROJECT_NAME})
 
 ament_package()

@@ -66,6 +66,8 @@ public:
     p.landtakeoff_wait = declare_parameter("landtakeoff_wait", p.landtakeoff_wait);
     p.arm_timeout = declare_parameter("arm_timeout", p.arm_timeout);
     p.segment_timeout = declare_parameter("segment_timeout", p.segment_timeout);
+    p.state_timeout = declare_parameter("state_timeout", p.state_timeout);
+    p.pose_timeout = declare_parameter("pose_timeout", p.pose_timeout);
 
     // --- misia -------------------------------------------------------------
     if (mission_file.empty()) {
@@ -167,9 +169,11 @@ private:
   {
     executor_->tick(now().seconds());
     publishViz();
-    if (executor_->state() == MissionExecutor::State::DONE && !finished_) {
+    // DONE, alebo ABORT bez dalsich prikazov (LAND potvrdeny / pilot prevzal)
+    if (executor_->finished() && !finished_) {
       finished_ = true;
-      RCLCPP_INFO(get_logger(), "misia dokoncena, koncim");
+      RCLCPP_INFO(get_logger(), "misia skoncila v stave %s, koncim",
+        MissionExecutor::name(executor_->state()));
       rclcpp::shutdown();
     }
   }

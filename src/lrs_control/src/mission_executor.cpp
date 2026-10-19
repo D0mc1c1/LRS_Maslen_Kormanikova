@@ -71,15 +71,21 @@ void MissionExecutor::tick(double now)
   const VehicleState st = vehicle_.state();
 
   // --- strazcovia platni pre viac stavov -----------------------------------
-  if (state_ != State::WAIT_CONNECTION && !finished() && !st.connected &&
+  // Spojenie stratene (MAVROS spadol / FCU odpojene): prikazy by nedosli -> prestat riadit.
+  if (controlState()) {
+    std::string why;
+    if (!linkOk(st, p_.state_timeout, p_.pose_timeout, why)) {
+      release("spojenie stratene: " + why);
+    }
+  } else if (state_ != State::WAIT_CONNECTION && !finished() && !st.connected &&
     now - last_disconnect_warn_ > 1.0)
   {
     log(LogLevel::Warn, "MAVROS hlasi connected=false");
     last_disconnect_warn_ = now;
   }
+  // Pilot prepol mod z RC (alebo disarm vo vzduchu): NEBOJOVAT s nim.
   if (airborneState() && (st.mode != "GUIDED" || !st.armed)) {
-    abort("mod zmeneny zvonka na '" + st.mode + "', armed=" + (st.armed ? "1" : "0") +
-      " -> prestavam posielat setpointy");
+    release("mod zmeneny zvonka na '" + st.mode + "', armed=" + (st.armed ? "1" : "0"));
   }
 
   switch (state_) {
@@ -123,9 +129,24 @@ void MissionExecutor::enter(State s, const std::string & why)
 
 void MissionExecutor::abort(const std::string & why)
 {
-  if (state_ != State::ABORT) {
-    enter(State::ABORT, why);
+  if (state_ != State::ABORT && state_ != State::DONE) {
+    command_on_abort_ = true;
+    enter(State::ABORT, why + " -> LAND");
   }
+}
+
+void MissionExecutor::release(const std::string & why)
+{
+  if (state_ != State::ABORT && state_ != State::DONE) {
+    command_on_abort_ = false;
+    enter(State::ABORT, why + " -> prestavam riadit, nic neprikazujem");
+  }
+}
+
+bool MissionExecutor::controlState() const
+{
+  return state_ == State::SET_MODE || state_ == State::ARM || state_ == State::TAKEOFF ||
+         state_ == State::LAND || airborneState();
 }
 
 bool MissionExecutor::airborneState() const
@@ -185,7 +206,7 @@ void MissionExecutor::onPlan(const VehicleState & st, double now)
   // 1) prvy tick v PLAN: kontroly a spustenie planovania vo vlakne
   if (!plan_future_.valid()) {
     if (st.armed) {
-      abort("dron je uz armnuty, misiu spusti s dronom na zemi");
+      release("dron je uz armnuty, misiu spusti s dronom na zemi");
       return;
     }
     // kontrola prevodu map <-> local: dron by mal stat pod prvym (takeoff) waypointom
@@ -297,7 +318,7 @@ void MissionExecutor::onTakeoff(const VehicleState & st, double now)
     return;
   }
   if (st.mode != "GUIDED" && inState(now) > 1.0) {
-    abort("pocas vzletu sa mod zmenil na '" + st.mode + "'");
+    release("pocas vzletu sa mod zmenil na '" + st.mode + "'");
     return;
   }
   if (!st.armed && inState(now) > 2.0) {
@@ -525,9 +546,15 @@ void MissionExecutor::onLand(const VehicleState & st, double now)
     abort("pristatie trva dlhsie ako " + fmt("%.0f", p_.land_timeout) + " s");
     return;
   }
-  if (st.mode != "LAND" && requestDue(now)) {
-    vehicle_.requestLand();
-    markRequestSent(now);
+  // GUIDED = este sme neprepli -> poziadat o LAND; LAND = cakat na disarm;
+  // iny mod = pilot prevzal riadenie -> uz nic neposielat
+  if (st.mode == "GUIDED") {
+    if (requestDue(now)) {
+      vehicle_.requestLand();
+      markRequestSent(now);
+    }
+  } else if (st.mode != "LAND") {
+    release("pocas pristatia mod zmeneny na '" + st.mode + "'");
   }
 }
 
@@ -559,8 +586,28 @@ void MissionExecutor::onNextWaypoint(const VehicleState & st)
 
 void MissionExecutor::onAbort(const VehicleState & st, double now)
 {
-  // vo vzduchu: prepnut do LAND (indoor je RTL nebezpecne, stupa do vysky)
-  if (st.armed && st.mode != "LAND" && requestDue(now) && req_attempts_ < 5) {
+  // command_on_abort_ = false: pilot prevzal / spojenie stratene -> NIC neposielame
+  if (!command_on_abort_) {
+    return;
+  }
+  if (!st.armed) {
+    command_on_abort_ = false;
+    log(LogLevel::Info, "ABORT: dron je disarmnuty, nie je co prikazat");
+    return;
+  }
+  // LAND potvrdeny -> dalej riadi ArduPilot; dalsie zmeny modu su pilotove.
+  // (indoor nie RTL: stupa do RTL_ALT, v hale nebezpecne)
+  if (st.mode == "LAND") {
+    command_on_abort_ = false;
+    log(LogLevel::Info, "ABORT: LAND potvrdeny, dalej riadi ArduPilot");
+    return;
+  }
+  if (requestDue(now)) {
+    if (req_attempts_ >= 5) {
+      command_on_abort_ = false;
+      log(LogLevel::Error, "ABORT: LAND sa nepodarilo nastavit, riadi pilot");
+      return;
+    }
     vehicle_.requestMode("LAND");
     markRequestSent(now);
   }

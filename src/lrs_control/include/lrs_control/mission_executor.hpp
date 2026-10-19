@@ -42,6 +42,9 @@ struct ExecutorParams
   double segment_timeout{120.0};
   double yaw_task_timeout{20.0};
   double land_timeout{60.0};
+  // strata spojenia: /mavros/state chodi ~1 Hz, poloha v SITL ~4 Hz
+  double state_timeout{3.0};
+  double pose_timeout{1.0};
 };
 
 // Stavovy automat misie. Neobsahuje ROS -> da sa testovat offline.
@@ -77,12 +80,17 @@ public:
   void tick(double now);
 
   State state() const {return state_;}
-  bool finished() const {return state_ == State::DONE || state_ == State::ABORT;}
+  // Hotovo = DONE, alebo ABORT, v ktorom uz nie je co prikazat (LAND potvrdeny,
+  // dron na zemi, alebo riadenie prevzal pilot). Potom sa node moze ukoncit.
+  bool finished() const
+  {
+    return state_ == State::DONE || (state_ == State::ABORT && !command_on_abort_);
+  }
   std::size_t waypointIndex() const {return wp_idx_;}
   const std::vector<lrs_planning::Path> & segments() const {return segments_;}
   static const char * name(State s);
 
-  // externy abort (napr. ROS sluzba)
+  // abort (ROS sluzba alebo chyba misie): prepne do LAND
   void abort(const std::string & why);
 
 private:
@@ -115,6 +123,9 @@ private:
   void markRequestSent(double now);
   std::optional<double> legYaw(std::size_t to_idx) const;  // smer useku path[to-1]->path[to]
   bool airborneState() const;
+  bool controlState() const;     // dron je (alebo bude) armnuty a program ho riadi
+  // pilot prevzal / spojenie stratene: prestat riadit, NIC neprikazovat
+  void release(const std::string & why);
   void log(LogLevel l, const std::string & msg);
   void send(const Vec3 & p, double yaw);   // pozicny setpoint + zapamatanie
   void logSummary();
@@ -162,6 +173,7 @@ private:
   double seg_t0_{0.0};
   Vec3 last_sp_{};
   bool sent_this_tick_{false};
+  bool command_on_abort_{true};
   double last_disconnect_warn_{-1.0};
   std::vector<Arrival> arrivals_;
 };

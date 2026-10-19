@@ -13,4 +13,4 @@ bool astar(
   Path& out_path,
   double& out_time_ms);
 
-}  // namespace lrs_planning
+}

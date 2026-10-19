@@ -43,20 +43,24 @@ MavrosVehicle::MavrosVehicle(rclcpp::Node & node, const FrameTransform & tf)
   state_sub_ = node_.create_subscription<mavros_msgs::msg::State>(
     "/mavros/state", qos,
     [this](const mavros_msgs::msg::State & m) {
+      const double t = node_.now().seconds();
       std::lock_guard<std::mutex> lk(mtx_);
       st_.connected = m.connected;
       st_.armed = m.armed;
       st_.mode = m.mode;
+      state_rx_t_ = t;
     }, opts);
 
   pose_sub_ = node_.create_subscription<geometry_msgs::msg::PoseStamped>(
     "/mavros/local_position/pose", qos,
     [this](const geometry_msgs::msg::PoseStamped & m) {
+      const double t = node_.now().seconds();
       std::lock_guard<std::mutex> lk(mtx_);
       // local -> map
       st_.pos = tf_.toMap({m.pose.position.x, m.pose.position.y, m.pose.position.z});
       st_.yaw = tf_.yawToMap(yawFromQuat(m.pose.orientation));
       st_.has_pose = true;
+      pose_rx_t_ = t;
     }, opts);
 
   vel_sub_ = node_.create_subscription<geometry_msgs::msg::TwistStamped>(
@@ -64,6 +68,54 @@ MavrosVehicle::MavrosVehicle(rclcpp::Node & node, const FrameTransform & tf)
     [this](const geometry_msgs::msg::TwistStamped & m) {
       std::lock_guard<std::mutex> lk(mtx_);
       st_.vel = tf_.dirToMap({m.twist.linear.x, m.twist.linear.y, m.twist.linear.z});
+    }, opts);
+
+  // --- A1.3: GPS, home, kompas -------------------------------------------
+  gps_sub_ = node_.create_subscription<sensor_msgs::msg::NavSatFix>(
+    "/mavros/global_position/global", qos,
+    [this](const sensor_msgs::msg::NavSatFix & m) {
+      std::lock_guard<std::mutex> lk(mtx_);
+      st_.has_gps = true;
+      st_.gps_status = m.status.status;
+      st_.gps = {m.latitude, m.longitude, m.altitude};
+      // kovariancia [m^2]: diagonala E, N; 0 = COVARIANCE_TYPE_UNKNOWN
+      if (m.position_covariance_type != sensor_msgs::msg::NavSatFix::COVARIANCE_TYPE_UNKNOWN) {
+        st_.h_acc = std::sqrt((m.position_covariance[0] + m.position_covariance[4]) / 2.0);
+      }
+    }, opts);
+
+  // pocet satelitov (plugin gps_status; ak MAVROS temu nema, ostane -1 = nezname)
+  gps_raw_sub_ = node_.create_subscription<mavros_msgs::msg::GPSRAW>(
+    "/mavros/gpsstatus/gps1/raw", qos,
+    [this](const mavros_msgs::msg::GPSRAW & m) {
+      std::lock_guard<std::mutex> lk(mtx_);
+      st_.satellites = m.satellites_visible;
+    }, opts);
+
+  rel_alt_sub_ = node_.create_subscription<std_msgs::msg::Float64>(
+    "/mavros/global_position/rel_alt", qos,
+    [this](const std_msgs::msg::Float64 & m) {
+      std::lock_guard<std::mutex> lk(mtx_);
+      st_.has_rel_alt = true;
+      st_.rel_alt = m.data;
+    }, opts);
+
+  compass_sub_ = node_.create_subscription<std_msgs::msg::Float64>(
+    "/mavros/global_position/compass_hdg", qos,
+    [this](const std_msgs::msg::Float64 & m) {
+      std::lock_guard<std::mutex> lk(mtx_);
+      st_.has_compass = true;
+      st_.compass_hdg_deg = m.data;
+    }, opts);
+
+  // home MAVROS posiela ako "latched" spravu (reliable + transient_local) len pri zmene.
+  // Best-effort/volatile odber by ju po starte nodu nedostal -> rovnake QoS ako publisher.
+  home_sub_ = node_.create_subscription<mavros_msgs::msg::HomePosition>(
+    "/mavros/home_position/home", rclcpp::QoS(rclcpp::KeepLast(1)).reliable().transient_local(),
+    [this](const mavros_msgs::msg::HomePosition & m) {
+      std::lock_guard<std::mutex> lk(mtx_);
+      st_.has_home = true;
+      st_.home = {m.geo.latitude, m.geo.longitude, m.geo.altitude};
     }, opts);
 
   sp_pub_ = node_.create_publisher<PositionTarget>("/mavros/setpoint_raw/local", 10);
@@ -76,8 +128,12 @@ MavrosVehicle::MavrosVehicle(rclcpp::Node & node, const FrameTransform & tf)
 
 VehicleState MavrosVehicle::state() const
 {
+  const double now = node_.now().seconds();
   std::lock_guard<std::mutex> lk(mtx_);
-  return st_;
+  VehicleState s = st_;
+  s.state_age = state_rx_t_ < 0.0 ? -1.0 : now - state_rx_t_;
+  s.pose_age = pose_rx_t_ < 0.0 ? -1.0 : now - pose_rx_t_;
+  return s;
 }
 
 RequestStatus MavrosVehicle::requestStatus() const
@@ -157,21 +213,42 @@ void MavrosVehicle::requestLand()
 
 void MavrosVehicle::sendPositionTarget(const Vec3 & p_map, double yaw)
 {
+  TrajectorySetpoint sp;
+  sp.p = p_map;
+  sp.yaw = yaw;
+  sendTrajectorySetpoint(sp);
+}
+
+void MavrosVehicle::sendTrajectorySetpoint(const TrajectorySetpoint & t)
+{
   PositionTarget sp;
   sp.header.stamp = node_.now();
   sp.header.frame_id = "map";
   // MAVROS cakava ENU data s FRAME_LOCAL_NED a prevod do NED spravi sam
   sp.coordinate_frame = PositionTarget::FRAME_LOCAL_NED;
-  // pouzit len poziciu + yaw; rychlost, zrychlenie a yaw_rate ignorovat
-  sp.type_mask = PositionTarget::IGNORE_VX | PositionTarget::IGNORE_VY |
-    PositionTarget::IGNORE_VZ | PositionTarget::IGNORE_AFX | PositionTarget::IGNORE_AFY |
-    PositionTarget::IGNORE_AFZ | PositionTarget::IGNORE_YAW_RATE;
+  // vzdy poloha + yaw; rychlost a yaw_rate len ak su zadane; zrychlenie nikdy
+  sp.type_mask = PositionTarget::IGNORE_AFX | PositionTarget::IGNORE_AFY |
+    PositionTarget::IGNORE_AFZ;
   // map -> local
-  const Vec3 l = tf_.toLocal(p_map);
+  const Vec3 l = tf_.toLocal(t.p);
   sp.position.x = l.x;
   sp.position.y = l.y;
   sp.position.z = l.z;
-  sp.yaw = static_cast<float>(tf_.yawToLocal(yaw));
+  if (t.v) {
+    const Vec3 vl = tf_.dirToLocal(*t.v);
+    sp.velocity.x = vl.x;
+    sp.velocity.y = vl.y;
+    sp.velocity.z = vl.z;
+  } else {
+    sp.type_mask |= PositionTarget::IGNORE_VX | PositionTarget::IGNORE_VY |
+      PositionTarget::IGNORE_VZ;
+  }
+  sp.yaw = static_cast<float>(tf_.yawToLocal(t.yaw));
+  if (t.yaw_rate) {
+    sp.yaw_rate = static_cast<float>(*t.yaw_rate);  // ENU, MAVROS otoci znamienko do NED
+  } else {
+    sp.type_mask |= PositionTarget::IGNORE_YAW_RATE;
+  }
   sp_pub_->publish(sp);
 }
 

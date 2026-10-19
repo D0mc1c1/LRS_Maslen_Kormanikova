@@ -1,0 +1,80 @@
+# Parametre outdoor misie (A1.3). Vsetko sa da prepisat cez -p nazov:=hodnota.
+# Ramec: MAVROS local ENU (x = vychod, y = sever, z = hore), ciele relativne k miestu vzletu.
+/**:
+  ros__parameters:
+    altitude: 5.0                     # [m] letova vyska nad miestom vzletu
+
+    # GPS pred vzletom (inak NEARMUJE)
+    min_satellites: 6                 # kontroluje sa len ak MAVROS posiela pocet satelitov
+    max_h_acc: 2.0                    # [m] max. horizontalna chyba z kovariancie NavSatFix
+    gps_settle_time: 3.0              # [s] GPS musi byt OK nepretrzite
+    home_wait: 10.0                   # [s] ak home nepride, pociatok = prvy platny fix
+
+    # vzlet a stabilne drzanie
+    takeoff_tol: 0.20                 # [m] vzlet hotovy pri vyske >= altitude - takeoff_tol
+    hold_tol: 0.30                    # [m] odchylka od bodu nad miestom vzletu
+    hold_v: 0.20                      # [m/s] rychlost
+    hold_time: 5.0                    # [s] tolko nepretrzite stabilne -> dalsi krok
+
+    # poziadavky a timeouty [s]
+    request_retry: 3.0
+    mode_timeout: 20.0
+    arm_timeout: 60.0
+    takeoff_timeout: 40.0
+    hold_timeout: 60.0
+    land_timeout: 90.0
+
+    setpoint_rate: 20.0               # [Hz] riadiaci timer = FSM + setpoint
+    status_period: 2.0                # [s] vypis stavu
+
+    # --- A1.3 cast 3: stvorec s natocenim na POI ---------------------------------
+    # POI = bod zaujmu na zemi, stred stvorca aj osmicky (cast 4).
+    # poi_lat + poi_lon (oba nenulove) -> POI z lat/lon, inak posun od miesta vzletu.
+    # Posun N 5 m: miesto vzletu je 2.5 m mimo stvorca, vzlet a pristatie nie su pod trasou.
+    # Geofence: max. |POI| + S/sqrt(2) = 5 + 3.54 = 8.54 m od miesta vzletu, vyska 5 m.
+    poi_lat: 0.0                      # [deg]
+    poi_lon: 0.0                      # [deg]
+    poi_east: 0.0                     # [m] od miesta vzletu
+    poi_north: 5.0                    # [m] od miesta vzletu
+    square_side: 5.0                  # [m] zadanie: S = 5 m
+    # [m/s] na stvorci: pri strane 2.5 m od POI sa smer na POI meni rychlostou
+    # v / 2.5 = 23 deg/s pri 1 m/s -> zvladnutelne, chyba natocenia par stupnov
+    speed: 1.0
+    accel: 0.5                        # [m/s^2] rozbeh a brzdenie na kazdom useku
+    corner_tol: 0.30                  # [m] roh dosiahnuty
+    leg_timeout_extra: 20.0           # [s] rezerva k casu useku
+    poi_yaw_source: "position"        # smer na POI zo skutocnej polohy ("position") alebo setpointu
+    poi_min_dist: 0.5                 # [m] blizsie k POI sa smer nepocita
+    align_tol_deg: 5.0                # pred stvorcom natocit nos na POI s presnostou
+    align_time: 1.0                   # [s]
+    velocity_ff: true                 # rychlost trajektorie ako feedforward do setpointu
+    yaw_rate_ff: true                 # rychlost otacania ako feedforward (ArduCopter 4.1+)
+    geofence_radius: 15.0             # [m] misia dalej od miesta vzletu sa NESPUSTI
+
+    # --- A1.3 cast 4: osmicka nad POI ------------------------------------------------
+    # x = A sin(th), y = A sin(th) cos(th), th = omega * (now - t_start); stred = POI vo vyske letu.
+    # Rychlost |v| = A*omega*sqrt(cos^2 th + cos^2 2th), max v strede A*omega*sqrt(2).
+    # omega 0.25: max 3*0.25*1.414 = 1.06 m/s (ako na stvorci), kolo 2*pi/0.25 = 25.1 s
+    # (+ 3 s rozbeh/dobeh). Max. rychlost otacania 3.17*omega = 45 deg/s (pri lalokoch).
+    # Zadanie dovoluje do 0.35 (1.48 m/s); na realnom drone zacat nizsie (0.15 -> 0.64 m/s).
+    fig8_amplitude: 3.0               # [m] zadanie: A = 3 m -> 6 x 3 m
+    fig8_omega: 0.25                  # [rad/s]
+    fig8_laps: 1.0                    # pocet kol
+    # [s] plynuly rozbeh fazy z 0 na omega (a dobeh na konci). Bez neho by setpoint
+    # v strede vyrazil hned rychlostou 1.06 m/s (skok rychlosti). 0 = presne th = omega*t.
+    fig8_ramp: 3.0
+    fig8_rotation_deg: 0.0            # [deg] otocenie dlhej osi od vychodu (ENU, CCW)
+    fig8_max_speed: 1.5               # [m/s] A*omega*sqrt(2) nad limitom -> NEVZLIETA
+    max_track_err: 1.5                # [m] odchylka od setpointu na osmicke -> ABORT + LAND
+
+    # --- A1.3 cast 5: abort a strata spojenia ------------------------------------
+    # ros2 service call /outdoor_mission/abort std_srvs/srv/Trigger  -> prepne do abort_mode
+    # (aj chyba misie: timeout, odchylka od osmicky). Ked ArduPilot mod potvrdi, node skonci.
+    #   LAND   pristatie na mieste (predvolene, najkratsia cesta k zemi)
+    #   RTL    navrat na home a pristatie; POZOR: najprv stupa na RTL_ALT (default 15 m)
+    #   BRAKE / LOITER  zastavit a visiet, dalej pilot
+    # Pilot prepne mod z RC / disarm vo vzduchu / strata spojenia -> program prestane
+    # posielat setpointy a NIC neprikazuje (nebojuje s pilotom), node skonci.
+    abort_mode: "LAND"
+    state_timeout: 3.0                # [s] /mavros/state chodi ~1 Hz
+    pose_timeout: 1.0                 # [s] /mavros/local_position/pose

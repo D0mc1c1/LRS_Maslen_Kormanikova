@@ -21,4 +21,4 @@ private:
   double safety_radius_;
 };
 
-}  // namespace lrs_planning
+}

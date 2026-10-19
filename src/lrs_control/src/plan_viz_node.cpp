@@ -1,11 +1,6 @@
 // plan_viz: naplanuje celu misiu cez A* (A1.1) a zobrazi ju v RViz2.
 // Netreba Gazebo, SITL ani MAVROS.
 //
-//   ros2 run lrs_control plan_viz --ros-args
-//     --params-file src/lrs_control/config/indoor.yaml
-//     -p mission_file:=src/lrs_control/missions/exam_example.csv
-//   rviz2 -d src/lrs_control/rviz/lrs.rviz
-//
 // Prvy segment zacina v bode `start_xy` (spawn) vo vyske prveho waypointu,
 // rovnako ako v indoor_mission.
 #include <cstdio>

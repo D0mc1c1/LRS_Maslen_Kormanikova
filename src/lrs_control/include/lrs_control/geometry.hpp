@@ -44,7 +44,7 @@ inline double distXY(const Vec3 & a, const Vec3 & b)
 {
   return std::hypot(a.x - b.x, a.y - b.y);
 }
-
+// vypociate velkost 3D vektora pouziva sa pri urceni rychlosti
 inline double norm(const Vec3 & v) {return std::sqrt(v.x * v.x + v.y * v.y + v.z * v.z);}
 
 // Smer letu z p do q (ENU yaw). Pri cisto vertikalnom useku nema zmysel.
@@ -77,6 +77,12 @@ struct FrameTransform
     const double dx = l.x - t.x, dy = l.y - t.y;
     return {c * dx + s * dy, -s * dx + c * dy, l.z - t.z};
   }
+  // prevod smeroveho vektora mapy do local
+  Vec3 dirToLocal(const Vec3 & v) const   // vektor (rychlost), bez posunu
+  {
+    const double c = std::cos(yaw), s = std::sin(yaw);
+    return {c * v.x - s * v.y, s * v.x + c * v.y, v.z};
+  }
   Vec3 dirToMap(const Vec3 & v) const   // vektor (rychlost), bez posunu
   {
     const double c = std::cos(yaw), s = std::sin(yaw);
@@ -86,4 +92,4 @@ struct FrameTransform
   double yawToMap(double y_local) const {return wrapPi(y_local - yaw);}
 };
 
-}  // namespace lrs_control
+}

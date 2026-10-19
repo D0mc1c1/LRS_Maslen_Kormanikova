@@ -23,7 +23,7 @@ bool VoxelMap::load(const std::string & pcd_path, double voxel_size)
   min_ = {mn.x, mn.y, mn.z};
   max_ = {mx.x, mx.y, mx.z};
   
-  //pocet voxelov
+  //pocet voxelov v troch smeroch
   nx_ = static_cast<size_t>(std::ceil((max_.x - min_.x) / voxel_size));
   ny_ = static_cast<size_t>(std::ceil((max_.y - min_.y) / voxel_size));
   nz_ = static_cast<size_t>(std::ceil((max_.z - min_.z) / voxel_size));
@@ -67,7 +67,7 @@ size_t VoxelMap::indexToLinear(int ix, int iy, int iz) const
   return ix + iy * nx_ + iz * nx_ * ny_;
 }
 
-
+// ix, iy, iz => indexy voxela kontrolovaneho bodu, dx, dy, dz => predstavuju posuny, cx, cy, cz => indexy prave kontrolovaneho okoliteho voxela
 bool VoxelMap::isOccupied(double x, double y, double z, double safety_radius) const
 {
   // kvader zvacseny o safety_radius v kazdej osi (inflacia boxu)
@@ -101,6 +101,7 @@ bool VoxelMap::isOccupied(double x, double y, double z, double safety_radius) co
       for (int dz = -radius_voxels; dz <= radius_voxels; ++dz) {
         int cx = ix + dx, cy = iy + dy, cz = iz + dz;
         
+        // kontroluju sa hranice
         if (cx < 0 || cx >= static_cast<int>(nx_) ||
             cy < 0 || cy >= static_cast<int>(ny_) ||
             cz < 0 || cz >= static_cast<int>(nz_)) {
@@ -109,16 +110,19 @@ bool VoxelMap::isOccupied(double x, double y, double z, double safety_radius) co
         
         if (occupancy_[indexToLinear(cx, cy, cz)] != 0) {
 
+          // vypocet stredu obsadeneho voxela
           Vec3 voxel_center = {
             min_.x + (cx + 0.5) * voxel_,
             min_.y + (cy + 0.5) * voxel_,
             min_.z + (cz + 0.5) * voxel_
           };
+          // vypocet vzdialenosti od stredu voxela
           double dx_real = x - voxel_center.x;
           double dy_real = y - voxel_center.y;
           double dz_real = z - voxel_center.z;
           double dist = std::sqrt(dx_real*dx_real + dy_real*dy_real + dz_real*dz_real);
           
+          // rozhodnutie podla bezpecneho polomeru
           if (dist < safety_radius) {
             return true;
           }
@@ -143,4 +147,4 @@ bool VoxelMap::isOccupied(const Vec3 & p, double safety_radius) const
   return isOccupied(p.x, p.y, p.z, safety_radius);
 }
 
-}  // namespace lrs_planning
+}

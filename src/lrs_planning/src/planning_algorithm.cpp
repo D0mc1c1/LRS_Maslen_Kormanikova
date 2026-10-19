@@ -13,9 +13,10 @@ namespace lrs_planning
 
 struct AStarNode {
   int x, y, z;
-  double g;
-  double f;
+  double g;  // cena cesty od zaciatku po aktualny uzol
+  double f;  // celkove skore: g + h
   
+  // vyberat uzol s najnizsim skore f
   bool operator>(const AStarNode& other) const {
     return f > other.f;
   }
@@ -49,7 +50,7 @@ bool astar(
     };
   };
   
-
+  // vypocita priamu euklidovsku vzdialenost
   auto heuristic = [&](int x, int y, int z, int gx, int gy, int gz) -> double {
     double dx = (x - gx) * voxel_size;
     double dy = (y - gy) * voxel_size;
@@ -75,11 +76,11 @@ bool astar(
     return false;
   }
   
-
+  // mnozina obsahuje uzly cakajuce na spracovanie
   std::priority_queue<AStarNode, std::vector<AStarNode>, std::greater<AStarNode>> open;
-  std::map<std::tuple<int,int,int>, double> g_score;
-  std::map<std::tuple<int,int,int>, std::tuple<int,int,int>> parent;
-  std::set<std::tuple<int,int,int>> closed;
+  std::map<std::tuple<int,int,int>, double> g_score;  // najnizsia znama cena cesty
+  std::map<std::tuple<int,int,int>, std::tuple<int,int,int>> parent;  //uuchovava najlepsi predchadzajuci voxel
+  std::set<std::tuple<int,int,int>> closed;  // obsahuje uz spracovane voxely
   
 
   AStarNode start_node{start_x, start_y, start_z, 0.0, 0.0};
@@ -184,4 +185,4 @@ bool astar(
   return false;
 }
 
-}  // namespace lrs_planning
+}

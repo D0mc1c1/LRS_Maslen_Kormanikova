@@ -13,7 +13,7 @@ namespace lrs_control
 namespace
 {
 
-std::string trim(const std::string & s)
+std::string trim(const std::string & s) // odstrani medzery, tab, a znaky noveho riadka
 {
   const auto b = s.find_first_not_of(" \t\r\n");
   if (b == std::string::npos) {
@@ -23,14 +23,14 @@ std::string trim(const std::string & s)
   return s.substr(b, e - b + 1);
 }
 
-std::string lower(std::string s)
+std::string lower(std::string s) // vsetky pismena prehodi na male
 {
   std::transform(s.begin(), s.end(), s.begin(),
     [](unsigned char c) {return static_cast<char>(std::tolower(c));});
   return s;
 }
 
-[[noreturn]] void fail(const std::string & path, int line, const std::string & msg)
+[[noreturn]] void fail(const std::string & path, int line, const std::string & msg) // vyhodi vynimku s infor o subore, riadka a dovode chyby pri nacitani 
 {
   throw std::runtime_error(path + ":" + std::to_string(line) + ": " + msg);
 }
@@ -49,9 +49,9 @@ double toDouble(const std::string & s, const std::string & path, int line, const
   }
 }
 
-}  // namespace
+}
 
-Mission loadMission(const std::string & path)
+Mission loadMission(const std::string & path) // nacita misiu z csv a spravy zoznam cielovych bodov (x, y, z, precision, task)
 {
   std::ifstream f(path);
   if (!f) {
@@ -67,13 +67,14 @@ Mission loadMission(const std::string & path)
     if (s.empty() || s[0] == '#') {
       continue;
     }
-
+    // rozdelenie riadka podla ciarok na jednotlive stlpce
     std::vector<std::string> cols;
     std::stringstream ss(s);
     std::string c;
     while (std::getline(ss, c, ',')) {
       cols.push_back(trim(c));
     }
+    //preskocenie hlavicky csv suboru
     if (!cols.empty() && lower(cols[0]) == "x") {
       continue;  // hlavicka
     }
@@ -82,12 +83,13 @@ Mission loadMission(const std::string & path)
         std::to_string(cols.size()));
     }
 
-    Waypoint wp;
-    wp.line = line;
+    Waypoint wp; // vytvorenie noveho cieloveho bodu misie
+    wp.line = line; // cislo riadka
     wp.p = {toDouble(cols[0], path, line, "x"),
       toDouble(cols[1], path, line, "y"),
-      toDouble(cols[2], path, line, "z")};
+      toDouble(cols[2], path, line, "z")}; // nacitanie priestorovych suradnic bodu
 
+    // spracovanie hard soft precision
     const std::string prec = lower(cols[3]);
     if (prec == "hard") {
       wp.precision = Precision::Hard;
@@ -97,6 +99,7 @@ Mission loadMission(const std::string & path)
       fail(path, line, "neznama precision '" + cols[3] + "' (hard/soft)");
     }
 
+    // spracovanie tasku
     std::string task = lower(cols[4]);
     task.erase(std::remove_if(task.begin(), task.end(),
       [](unsigned char ch) {return std::isspace(ch);}), task.end());
@@ -137,7 +140,7 @@ std::string toString(TaskType t)
   return "?";
 }
 
-std::string describe(const Waypoint & wp)
+std::string describe(const Waypoint & wp) // vytvori textovy opis x, y, z a stringove precistion a task a aj degree ak je yaw
 {
   char buf[128];
   std::snprintf(buf, sizeof(buf), "(%.2f, %.2f, %.2f) %s %s", wp.p.x, wp.p.y, wp.p.z,
@@ -151,4 +154,4 @@ std::string describe(const Waypoint & wp)
   return s;
 }
 
-}  // namespace lrs_control
+}
