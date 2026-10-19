@@ -23,9 +23,6 @@ Repozitár je rozdelený do dvoch hlavných modulov:
 - [Indoor misia](#indoor-misia)
 - [Outdoor misia](#outdoor-misia)
 - [Stavový automat](#stavový-automat)
-- [Diagram abortu a bezpečnostných stavov](#diagram-abortu-a-bezpečnostných-stavov)
-- [Popis jednotlivých úloh](#popis-jednotlivých-úloh)
-- [Poznámky k vývoju](#poznámky-k-vývoju)
 
 ---
 
