@@ -93,7 +93,7 @@ struct TrajectorySetpoint
 
 // Abstrakcia nad dronom. Stavovy automat vidi len toto rozhranie:
 //  - MavrosVehicle  = skutocny dron cez MAVROS (ROS 2)
-//  - SimVehicle     = jednoduchy model v mission_sim (offline test bez ROS)
+////  - SimVehicle     = jednoduchy model v mission_sim (offline test bez ROS)
 // Prevod map <-> local (MAVROS) robi implementacia, nie automat.
 //
 // Poziadavky (request*) su asynchronne a neblokuju. Naraz bezi jedna,
@@ -122,4 +122,4 @@ public:
   }
 };
 
-}  // namespace lrs_control
+}

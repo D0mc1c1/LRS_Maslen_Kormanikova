@@ -29,4 +29,4 @@ std::string toString(Precision p);
 std::string toString(TaskType t);
 std::string describe(const Waypoint & wp);  // "WP(8.65, 2.02, 1.00) soft yaw180"
 
-}  // namespace lrs_control
+}
