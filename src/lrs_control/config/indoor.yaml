@@ -3,13 +3,13 @@
   ros__parameters:
     # --- misia ---
     mission_file: ""                 # CSV misia (povinne)
-    planner: "astar"                 # astar | straight (priamky bez kolizii, len test)
+    planner: "astar"                 # astar | straight (priamky bez kolizii)
 
     # --- planovac A1.1 ---
-    map_path: "/home/user/LRS-URK/maps/FEI_LRS_PCD/map.pcd"   # UPRAV na svoju cestu
+    map_path: "/home/user/LRS-URK/maps/FEI_LRS_PCD/map.pcd"
     voxel_size: 0.10                 # [m] velkost bunky mriezky
     inflation_radius: 0.70           # [m] dron 0.3 + rezerva 0.4 (max 0.8, inak WP v prekazke)
-    max_flight_z: 3.0                # [m] strop letu (bez neho leti ponad regaly)
+    max_flight_z: 3.0                # [m] bez neho leti ponad regaly
     # regal A a regal B, kazdy [x_min, y_min, z_min, x_max, y_max, z_max] v mape
     rack_boxes: [1.07, 6.29, 0.0, 7.57, 7.34, 4.10,
                  1.07, 10.84, 0.0, 7.57, 11.89, 4.10]
