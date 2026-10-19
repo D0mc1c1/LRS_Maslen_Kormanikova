@@ -1,56 +1,45 @@
-# Parametre indoor misie (A1.2). Vsetko sa da prepisat cez -p nazov:=hodnota.
+# indoor_mission (A1.2). Kazdy parameter sa da prepisat: -p nazov:=hodnota
 /**:
   ros__parameters:
-    mission_file: ""                  # povinne, cesta k CSV
-    planner: "astar"                  # "astar" (A1.1) alebo "straight" (priamky, len test)
+    # --- misia ---
+    mission_file: ""                 # CSV misia (povinne)
+    planner: "astar"                 # astar | straight (priamky bez kolizii, len test)
 
-    # A1.1 planovac
+    # --- planovac A1.1 ---
     map_path: "/home/user/LRS-URK/maps/FEI_LRS_PCD/map.pcd"   # UPRAV na svoju cestu
-    voxel_size: 0.10                  # [m]
-    # [m] inflacia = polomer drona (~0.3) + tolerancia prechodu medzibodom (tol_pass 0.4).
-    # Pri 0.5 viedla cesta 1.07 m sirokou medzerou medzi stenou a regalom (koridor 7 cm).
-    # Max. ~0.8: waypointy (2.81, 8.15) su len 0.81 m od regalu.
-    inflation_radius: 0.70
-    # [m] strop letu (max. vyska stredu drona). Nad regalmi v mape chybaju body,
-    # bez stropu A* planoval let ponad regal vo vyske ~4.8 m.
-    max_flight_z: 3.0
-    # regaly ako plne boxy [x_min, y_min, z_min, x_max, y_max, z_max] (map frame),
-    # obal koliznych boxov z LRS-URK/models/fei_lrs_racks/model.sdf
+    voxel_size: 0.10                 # [m] velkost bunky mriezky
+    inflation_radius: 0.70           # [m] dron 0.3 + rezerva 0.4 (max 0.8, inak WP v prekazke)
+    max_flight_z: 3.0                # [m] strop letu (bez neho leti ponad regaly)
+    # regal A a regal B, kazdy [x_min, y_min, z_min, x_max, y_max, z_max] v mape
     rack_boxes: [1.07, 6.29, 0.0, 7.57, 7.34, 4.10,
                  1.07, 10.84, 0.0, 7.57, 11.89, 4.10]
-    viz_max_z: 4.0                    # RViz: voxely nad touto vyskou = priesvitna strecha (namespace "strecha")
+    viz_max_z: 4.0                   # [m] RViz: voxely vyssie = priesvitna strecha
 
-    # map frame (mapa, CSV) -> MAVROS local ENU:  local = R(yaw) * map + xyz
-    # fei_lrs_gazebo.world: gazeboXYZToNED = 180 0 0 -> Gazebo X = sever
-    # => local = (-y, x, z). Overene: spawn map (13, 7) -> local (-7, 13).
-    local_from_map_yaw_deg: 90.0
-    local_from_map_xyz: [0.0, 0.0, 0.0]
+    # --- ramce: mapa -> MAVROS local ---
+    local_from_map_yaw_deg: 90.0     # otocenie, lebo Gazebo X = sever (map (13,7) = local (-7,13))
+    local_from_map_xyz: [0.0, 0.0, 0.0]   # posun
+    yaw_task_frame: "map"            # uhol yawN v CSV: map (0 = +X mapy) | enu (0 = vychod)
 
-    # yawN z CSV: "map" = 0 deg je +X mapy (= sever), CCW kladny
-    #             "enu" = 0 deg je vychod (MAVROS local +X), CCW kladny
-    yaw_task_frame: "map"
+    setpoint_rate: 20.0              # [Hz] krok automatu a setpoint
 
-    setpoint_rate: 20.0               # [Hz] riadiaci timer = FSM + setpoint
+    # --- prichod na bod ---
+    tol_hard: 0.15                   # [m] hard waypoint ...
+    v_settle: 0.10                   # [m/s] ... pomalsie ako toto ...
+    settle_time: 1.0                 # [s] ... nepretrzite tak dlho
+    tol_soft: 0.50                   # [m] soft waypoint, prelet bez zastavenia
+    tol_pass: 0.40                   # [m] medzibod z planovaca, prelet bez zastavenia
 
-    # presnost prichodu [m]
-    tol_hard: 0.15                    # hard waypoint, + ustalenie:
-    v_settle: 0.10                    #   rychlost pod [m/s]
-    settle_time: 1.0                  #   nepretrzite [s]
-    tol_soft: 0.50                    # soft waypoint, prelet bez zastavenia
-    tol_pass: 0.40                    # medzibod cesty z planovaca (pass-through)
+    # --- natocenie ---
+    yaw_tol_deg: 5.0                 # [deg] tolerancia uhla
+    yaw_hold_time: 1.0               # [s] yawN: tak dlho drzat uhol
+    min_leg_xy: 0.20                 # [m] kratsi usek je zvisly, yaw sa nemeni
 
-    # natocenie
-    yaw_tol_deg: 5.0
-    yaw_hold_time: 1.0                # yawN: drzat uhol [s]
-    min_leg_xy: 0.20                  # kratsi usek v XY = vertikalny, yaw sa nemeni
+    # --- vzlet, pristatie, timeouty ---
+    takeoff_tol: 0.15                # [m] vzlet hotovy pri z >= ciel - 0.15
+    landtakeoff_wait: 3.0            # [s] landtakeoff: pauza na zemi
+    arm_timeout: 60.0                # [s] max cakanie na arm
+    segment_timeout: 120.0           # [s] max cas jedneho useku
 
-    # vzlet / pristatie / timeouty
-    takeoff_tol: 0.15
-    landtakeoff_wait: 3.0
-    arm_timeout: 60.0
-    segment_timeout: 120.0
-
-    # abort: ~/abort alebo chyba misie -> LAND (RTL nie: v hale stupa na RTL_ALT).
-    # Pilot prepne mod z RC / strata spojenia -> program prestane riadit, nic neprikazuje.
-    state_timeout: 3.0                # [s] /mavros/state neprislo -> spojenie stratene
-    pose_timeout: 1.0                 # [s] poloha neprisla -> spojenie stratene
+    # --- bezpecnost (abort = LAND, pilot alebo vypadok = program prestane riadit) ---
+    state_timeout: 3.0               # [s] bez /mavros/state = strata spojenia
+    pose_timeout: 1.0                # [s] bez polohy = strata spojenia
