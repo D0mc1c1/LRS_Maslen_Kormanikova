@@ -28,7 +28,7 @@ ros2 run lrs_control indoor_mission --ros-args \
 ```
 
 - `mission_file` – ľubovoľné CSV `x,y,z,precision,task` (map frame)
-- `planner:=astar` (default) – A* z A1.1; `planner:=straight` – priamky bez kontroly kolízií (len test)
+- `planner:=astar` (default) – A* z A1.1
 - abort počas letu: `ros2 service call /indoor_mission/abort std_srvs/srv/Trigger`
 
 ### Offline test (bez ROS a simulátora)
