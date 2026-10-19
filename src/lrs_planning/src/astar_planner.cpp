@@ -21,8 +21,8 @@ AStarPlanner::AStarPlanner(
     map_.addSolidBox(b.lo, b.hi);
   }
   if (std::isfinite(max_z)) {
-    // strop = plny box nad celou mapou. Spodok je o safety_radius vyssie,
-    // lebo isOccupied box zvacsi o safety_radius -> stred drona moze ist az po max_z.
+    // strop = plny box nad celou mapou
+    // spodok je o safety_radius vyssie, lebo isOccupied box zvacsi o safety_radius -> stred drona moze ist az po max_z
     const auto mn = map_.minBound();
     const auto mx = map_.maxBound();
     map_.addSolidBox({mn.x - 10.0, mn.y - 10.0, max_z + safety_radius},
@@ -48,4 +48,4 @@ std::optional<PlanResult> AStarPlanner::plan(const Vec3 & start, const Vec3 & go
   return r;
 }
 
-}  // namespace lrs_planning
+}

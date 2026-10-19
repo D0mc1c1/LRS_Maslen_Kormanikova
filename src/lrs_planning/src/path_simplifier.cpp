@@ -1,5 +1,5 @@
-// Zjednodusenie cesty (line-of-sight) a kontrola kolizii usekov.
-// Presunute z apps/plan_cli.cpp do kniznice, aby ho pouzival aj lrs_control.
+// zjednodusenie cesty (line-of-sight) a kontrola kolizii usekov
+// P-presunute z apps/plan_cli.cpp do kniznice, aby ho pouzival aj lrs_control
 #include "lrs_planning/path_simplifier.hpp"
 
 #include <cmath>
@@ -14,12 +14,14 @@ bool isLineFree(
   double safety_radius,
   double voxel_size)
 {
-  // Počet krokov pre interpoláciu
+  // pocet krokov pre interpolaciu - euklidovska vzdialenost
   double dist = std::sqrt(
     (p2.x-p1.x)*(p2.x-p1.x) +
     (p2.y-p1.y)*(p2.y-p1.y) +
     (p2.z-p1.z)*(p2.z-p1.z)
   );
+
+  // definovanie velkosti kroku
   int steps = static_cast<int>(dist / (voxel_size * 0.5)) + 1;
 
   
@@ -74,11 +76,6 @@ Path lineOfSightShortcut(
   return out_path;
 }
 
-
-// Kontrola po zjednoduseni: KAZDY usek (nielen body) musi byt volny.
-// A* overuje len stredy voxelov; usecka medzi dvoma susednymi stredmi moze
-// prejst k prekazke blizsie o max. polovicu uhlopriecky voxelu (voxel*sqrt(3)/2,
-// 8.7 cm pri 10 cm voxeli). Kontrola preto pouziva r - tato tolerancia.
 double checkRadius(double r, double voxel) {return r - voxel * std::sqrt(3.0) / 2.0;}
 
 bool pathIsFree(
@@ -93,4 +90,4 @@ bool pathIsFree(
   return true;
 }
 
-}  // namespace lrs_planning
+}
