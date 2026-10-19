@@ -1,6 +1,139 @@
-# LRS – Zadanie 1
+# LRS – Zadanie č.1 - Autonómne plánovanie a vykonávanie misie
 
-## Build
+Tento repozitár obsahuje implementáciu systému pre autonómne riadenie dronu v prostredí ROS 2. Cieľom zadania je:
+- plánovanie trasy v mape,
+- vykonávanie indoor misii,
+- vykonávanie outdoor misii s GPS,
+- vizualizáciu plánu a trajektórie.
+
+Repozitár je rozdelený do dvoch hlavných modulov:
+- `lrs_planning` – plánovanie a mapové operácie,
+- `lrs_control` – správa misií, stavový automat, MAVROS integrácia, outdoor/internetčná logika.
+
+---
+
+## Obsah
+
+- [Prehľad zadania](#prehľad-zadania)
+- [Štruktúra repozitára](#struktúra-repozitára)
+- [Architektúra systému](#architektúra-systému)
+- [Požiadavky](#požiadavky)
+- [Build projektu](#build-projektu)
+- [Spustenie plánovača](#spustenie-plánovača)
+- [Indoor misia](#indoor-misia)
+- [Outdoor misia](#outdoor-misia)
+- [Stavový automat](#stavový-automat)
+- [Diagram abortu a bezpečnostných stavov](#diagram-abortu-a-bezpečnostných-stavov)
+- [Popis jednotlivých úloh](#popis-jednotlivých-úloh)
+- [Poznámky k vývoju](#poznámky-k-vývoju)
+
+---
+
+## Prehľad zadania
+
+Zadanie je rozdelený na viacero úloh:
+
+1. A1.1 – plánovanie trasy v mape
+2. A1.2 – indoor misia a vykonávanie úloh v uzavretom prostredí
+3. A1.3 – outdoor misia s GPS a automatizovaným leteckým správaním
+
+---
+
+## Štruktúra repozitára
+
+```text
+LRS_Maslen_Kormanikova/
+├── README.md
+├── .gitignore
+├── docs/
+├── src/
+│   ├── lrs_planning/
+│   │   ├── apps/
+│   │   │   └── plan_cli.cpp
+│   │   ├── config/
+│   │   │   └── planning.yaml
+│   │   ├── include/
+│   │   │   └── lrs_planning/
+│   │   ├── src/
+│   │   │   ├── astar_planner.cpp
+│   │   │   ├── inflation.cpp
+│   │   │   ├── path_simplifier.cpp
+│   │   │   ├── planning_algorithm.cpp
+│   │   │   └── voxel_map.cpp
+│   │   ├── CMakeLists.txt
+│   │   └── package.xml
+│   │
+│   └── lrs_control/
+│       ├── config/
+│       │   ├── indoor.yaml
+│       │   └── outdoor.yaml
+│       ├── include/
+│       │   └── lrs_control/
+│       ├── missions/
+│       │   ├── exam_example.csv
+│       │   ├── mission_3_all.csv
+│       │   └── test_open.csv
+│       ├── rviz/
+│       │   ├── lrs.rviz
+│       │   └── outdoor.rviz
+│       ├── scripts/
+│       │   ├── plot_outdoor.py
+│       │   └── record_outdoor.sh
+│       ├── src/
+│       │   ├── gps_info_node.cpp
+│       │   ├── indoor_mission_node.cpp
+│       │   ├── mavros_vehicle.cpp
+│       │   ├── mission.cpp
+│       │   ├── mission_executor.cpp
+│       │   ├── outdoor_executor.cpp
+│       │   ├── outdoor_mission_node.cpp
+│       │   ├── plan_viz_node.cpp
+│       │   └── viz.cpp
+│       ├── test/
+│       │   ├── geo_test.cpp
+│       │   ├── mission_sim.cpp
+│       │   ├── outdoor_sim.cpp
+│       │   └── sim_vehicle.hpp
+│       ├── CMakeLists.txt
+│       └── package.xml
+```
+
+---
+
+## Architektúra systému
+
+```mermaid
+flowchart TD
+    A[plan_cli<br/>A1.1, bez ROS] --> B[MissionExecutor<br/>plán, let, úlohy]
+    C[plan_viz<br/>A1.1, RViz] --> B
+    D[indoor_mission<br/>A1.2, misia z CSV] --> B
+    E[outdoor_mission<br/>A1.3, GPS misia] --> F[OutdoorExecutor<br/>stavový automat]
+    G[gps_info<br/>A1.3, výpis GPS] --> H[Vehicle / MAVROS Vehicle]
+    I[Planner<br/>A* planner] --> J[VoxelMap + inflácia + map]
+    K[Mission CSV<br/>waypoints a úlohy] --> B
+
+    B --> I
+    F --> H
+    H --> L[MAVROS / ArduPilot / SITL / Gazebo]
+    J --> M[map.pcd + box / map]
+    M --> I
+```
+---
+
+## Build projektu
+
+- v prvom rade si vytvoríme pracovný priestor a naklonujeme zadanie z main vetvy
+
+```bash
+source /opt/ros/$ROS_DISTRO/setup.bash
+mkdir -p ~/lrs_ws/src
+cd ~/lrs_ws/src
+git clone https://github.com/D0mc1c1/LRS_Maslen_Kormanikova.git
+cd ~/lrs_ws
+```
+
+- zbuildíme naklonované zadanie
+  
 ```bash
 source /opt/ros/$ROS_DISTRO/setup.bash
 cd ~/lrs_ws
@@ -8,19 +141,32 @@ colcon build --symlink-install
 source install/setup.bash
 ```
 
-## A1.1 – plánovač (bez simulátora)
+## A1.1 – plánovač
+- spustíme plánovač a pracujeme s mapou v PCD formáte
 
 ```bash
 MAP=~/LRS-URK/maps/FEI_LRS_PCD/map.pcd
-ros2 run lrs_planning plan_cli $MAP 13 7 1 8.65 2.02 1 [radius=0.5]      # jeden segment
+ros2 run lrs_planning plan_cli $MAP 13 7 1 8.65 2.02 1 [radius=0.5]
+```
+- plánovanie celej misie z csv
+
+```bash
+MAP=~/LRS-URK/maps/FEI_LRS_PCD/map.pcd
 ros2 run lrs_planning plan_cli $MAP --mission src/lrs_control/missions/exam_example.csv
-ros2 run lrs_planning plan_cli $MAP --query 5.945 6.818 2.45             # obsadenost bodu
+```
+- skontrola obsadenosti bodu
+
+```bash
+MAP=~/LRS-URK/maps/FEI_LRS_PCD/map.pcd
+ros2 run lrs_planning plan_cli $MAP --query 5.945 6.818 2.45
 ```
 
 ## A1.2 – indoor misia
 
 V `src/lrs_control/config/indoor.yaml` nastav `map_path`. Potom 3 terminály podľa LRS-URK README (Gazebo, SITL, MAVROS) a:
 
+- Indoor časť rieši misie v uzavretom priestore, kde nie je potrebné používať GPS. Vytvára sa plán z mapy a následne sa vykonáva postupnosť úloh.
+- 
 ```bash
 ros2 run lrs_control indoor_mission --ros-args \
   --params-file src/lrs_control/config/indoor.yaml \
@@ -39,6 +185,8 @@ ros2 run lrs_control mission_sim src/lrs_control/missions/test_open.csv         
 ```
 
 ## A1.3 – outdoor misia
+
+Outdoor časť je zameraná na GPS navigáciu, prácu s lokálnym ENU súradnicovým systémom a správu letu dronu.
 
 ### Simulácia (outdoor svet)
 
@@ -130,3 +278,46 @@ SIM_CSV=/tmp/sim.csv ros2 run lrs_control outdoor_sim normal && ros2 run lrs_con
 
 Výstup: `outdoor_xy.png` (pohľad zhora + detail osmičky), `outdoor_poi.png`,
 `outdoor_fig8.png`, `outdoor_alt.png` v adresári bagu.
+
+---
+
+## Stavový automat
+
+Stavový automat je srdcom vykonávania misie. V procese sa prechádza cez jednotlivé fázy, pričom systém kontroluje bezpečnostné podmienky, aborty, pilotov zásah a GPS/komunikáciu.
+
+
+```mermaid
+flowchart TD
+    A[WAIT_CONNECTION] --> B[PLAN]
+    B --> C[SET_MODE]
+    C --> D[ARM]
+    D --> E[TAKEOFF]
+    E --> F[ARRIVE]
+    F --> G[NAVIGATE]
+    G --> H[ROTATE]
+    H --> I[TASK_YAW]
+    I --> J[NEXT_WAYPOINT]
+    J --> B
+
+    B --> K[GROUND_WAIT]
+    K --> L[LAND]
+    L --> M[DONE]
+
+    subgraph Abort
+        N[ABORT z ľubovoľného stavu]
+    end
+
+    B -. chyba / abort .-> N
+    C -. chyba / abort .-> N
+    D -. chyba / abort .-> N
+    E -. chyba / abort .-> N
+    F -. chyba / abort .-> N
+    G -. chyba / abort .-> N
+    H -. chyba / abort .-> N
+    I -. chyba / abort .-> N
+    J -. chyba / abort .-> N
+    K -. chyba / abort .-> N
+    L -. chyba / abort .-> N
+
+    N --> L
+```
