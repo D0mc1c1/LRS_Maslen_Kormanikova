@@ -284,37 +284,32 @@ Stavový automat je srdcom vykonávania misie. V procese sa prechádza cez jedno
 
 
 ```mermaid
-flowchart TD
-    A[WAIT_CONNECTION] --> B[PLAN]
-    B --> C[SET_MODE]
-    C --> D[ARM]
-    D --> E[TAKEOFF]
-    E --> F[ARRIVE]
-    F --> G[NAVIGATE]
-    G --> H[ROTATE]
-    H --> I[TASK_YAW]
-    I --> J[NEXT_WAYPOINT]
-    J --> B
+flowchart TB
+    A([Štart]) --> B[WAIT_CONNECTION]
+    B --> C[PLAN]
+    C --> D[SET_MODE]
+    D --> E[ARM]
+    E --> F[TAKEOFF]
+    F --> G[ARRIVE]
+    G --> H[NAVIGATE]
+    H --> I[ROTATE]
+    I --> J[TASK_YAW]
+    J --> K[NEXT_WAYPOINT]
 
-    B --> K[GROUND_WAIT]
-    K --> L[LAND]
-    L --> M[DONE]
+    K -->|Ďalší bod| C
+    K -->|Koniec misie| L[GROUND_WAIT]
+    L --> M[LAND]
+    M --> N([DONE])
 
-    subgraph Abort
-        N[ABORT z ľubovoľného stavu]
-    end
+    C -. Chyba / abort .-> X[ABORT]
+    D -. Chyba / abort .-> X
+    E -. Chyba / abort .-> X
+    F -. Chyba / abort .-> X
+    G -. Chyba / abort .-> X
+    H -. Chyba / abort .-> X
+    I -. Chyba / abort .-> X
+    J -. Chyba / abort .-> X
+    K -. Chyba / abort .-> X
 
-    B -. chyba / abort .-> N
-    C -. chyba / abort .-> N
-    D -. chyba / abort .-> N
-    E -. chyba / abort .-> N
-    F -. chyba / abort .-> N
-    G -. chyba / abort .-> N
-    H -. chyba / abort .-> N
-    I -. chyba / abort .-> N
-    J -. chyba / abort .-> N
-    K -. chyba / abort .-> N
-    L -. chyba / abort .-> N
-
-    N --> L
+    X --> M
 ```
