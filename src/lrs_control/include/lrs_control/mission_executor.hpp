@@ -42,7 +42,7 @@ struct ExecutorParams
   double segment_timeout{120.0};
   double yaw_task_timeout{20.0};
   double land_timeout{60.0};
-  // strata spojenia: /mavros/state chodi ~1 Hz, poloha ~30 Hz
+  // strata spojenia: /mavros/state chodi ~1 Hz, poloha v SITL ~4 Hz
   double state_timeout{3.0};
   double pose_timeout{1.0};
 };

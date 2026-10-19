@@ -108,8 +108,10 @@ MavrosVehicle::MavrosVehicle(rclcpp::Node & node, const FrameTransform & tf)
       st_.compass_hdg_deg = m.data;
     }, opts);
 
+  // home MAVROS posiela ako "latched" spravu (reliable + transient_local) len pri zmene.
+  // Best-effort/volatile odber by ju po starte nodu nedostal -> rovnake QoS ako publisher.
   home_sub_ = node_.create_subscription<mavros_msgs::msg::HomePosition>(
-    "/mavros/home_position/home", qos,
+    "/mavros/home_position/home", rclcpp::QoS(rclcpp::KeepLast(1)).reliable().transient_local(),
     [this](const mavros_msgs::msg::HomePosition & m) {
       std::lock_guard<std::mutex> lk(mtx_);
       st_.has_home = true;
