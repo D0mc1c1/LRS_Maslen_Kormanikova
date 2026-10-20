@@ -18,9 +18,6 @@ Repozitár je rozdelený do dvoch hlavných modulov:
 - [Štruktúra repozitára](#struktúra-repozitára)
 - [Architektúra systému](#architektúra-systému)
 - [Build projektu](#build-projektu)
-- [Spustenie plánovača](#spustenie-plánovača)
-- [Indoor misia](#indoor-misia)
-- [Outdoor misia](#outdoor-misia)
 - [Stavový automat](#stavový-automat)
 
 ---
