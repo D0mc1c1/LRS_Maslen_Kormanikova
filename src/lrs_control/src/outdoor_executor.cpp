@@ -29,7 +29,7 @@ std::string wpName(std::size_t i)
 {
   return "W" + std::to_string(i % 4 + 1);
 }
-}  // namespace
+}
 
 OutdoorExecutor::OutdoorExecutor(Vehicle & vehicle, OutdoorParams params, Logger log)
 : vehicle_(vehicle), p_(params), logger_(std::move(log))
@@ -59,9 +59,8 @@ const char * OutdoorExecutor::name(State s)
   return "?";
 }
 
-// ---------------------------------------------------------------------------
-// hlavna slucka
-// ---------------------------------------------------------------------------
+
+// Hlavna slucka misie, ktora spracuje aktualny stav dronu a riadi prechod medzi stavmi. (20hz)
 void OutdoorExecutor::tick(double now)
 {
   now_ = now;
@@ -112,7 +111,7 @@ void OutdoorExecutor::tick(double now)
     send(last_sp_, yaw_sp_);
   }
 }
-
+// Vrati nazov aktualneho stavu misie.
 std::string OutdoorExecutor::phase() const
 {
   std::string s = name(state_);
@@ -122,6 +121,7 @@ std::string OutdoorExecutor::phase() const
   return s;
 }
 
+// Vytvori zoznam bodov planovanej trajektorie.
 std::vector<Vec3> OutdoorExecutor::plannedPath() const
 {
   std::vector<Vec3> path;
@@ -142,7 +142,7 @@ std::vector<Vec3> OutdoorExecutor::plannedPath() const
   path.push_back(launch_);
   return path;
 }
-
+// Prepne misiu do noveho stavu a zapise zmenu do logu.
 void OutdoorExecutor::enter(State s, const std::string & why)
 {
   char head[64];
@@ -158,11 +158,12 @@ void OutdoorExecutor::enter(State s, const std::string & why)
   track_err_ = -1.0;
 }
 
+// Prerusi misiu a nastavi sposob dalsieho postupu.
 void OutdoorExecutor::abort(const std::string & why)
 {
   doAbort(why, true);
 }
-
+// Spracuje prerusenie misie s moznostou vydat bezpecnostny prikaz.
 void OutdoorExecutor::doAbort(const std::string & why, bool command)
 {
   if (state_ == State::ABORT || state_ == State::DONE) {
@@ -172,7 +173,7 @@ void OutdoorExecutor::doAbort(const std::string & why, bool command)
   enter(State::ABORT, why + (command ? " -> " + p_.abort_mode :
     std::string(" -> prestavam riadit, nic neprikazujem")));
 }
-
+// Urci, ci sa ma kontrolovat spojenie pocas aktivneho riadenia.
 bool OutdoorExecutor::controlState() const
 {
   return state_ == State::SET_MODE || state_ == State::ARM || state_ == State::TAKEOFF ||
@@ -181,20 +182,21 @@ bool OutdoorExecutor::controlState() const
 
 // Stavy, v ktorych program riadi dron vo vzduchu a posiela setpointy.
 // TAKEOFF sem nepatri: pocas vzletu ArduPilot ide na ciel z cmd/takeoff.
+// Urci, ci sa dron nachadza v stave aktivneho riadenia pocas letu.
 bool OutdoorExecutor::airborneState() const
 {
   return state_ == State::HOLD || state_ == State::POI_ALIGN || state_ == State::SQUARE ||
          state_ == State::FIG8_ENTRY || state_ == State::FIG8_ALIGN || state_ == State::FIG8 ||
          state_ == State::RETURN;
 }
-
+// Odošle cielovu polohu a natocenie dronu.
 void OutdoorExecutor::send(const Vec3 & p, double yaw)
 {
   vehicle_.sendPositionTarget(p, yaw);
   last_sp_ = p;
   sent_this_tick_ = true;
 }
-
+// Odošle cielovu polohu, rychlost a udaje o natacani.
 void OutdoorExecutor::sendTraj(const Vec3 & p, const Vec3 & v, double yaw, double yaw_rate)
 {
   TrajectorySetpoint sp;
@@ -207,13 +209,15 @@ void OutdoorExecutor::sendTraj(const Vec3 & p, const Vec3 & v, double yaw, doubl
   yaw_sp_ = yaw;
   sent_this_tick_ = true;
 }
-
+// Vypocita smer natocenia dronu smerom k bodu POI.
 double OutdoorExecutor::poiYaw(const Vec3 & p, double fallback) const
 {
   return distXY(p, poi_) < p_.poi_min_dist ? fallback : bearingXY(p, poi_);
 }
 
 // psi = atan2(dy, dx), d = POI - p, d' = -v  =>  psi' = (dy*vx - dx*vy) / |d|^2
+
+// Vypocita uhlovu rychlost potrebnu na sledovanie POI.
 double OutdoorExecutor::poiYawRate(const Vec3 & p, const Vec3 & v) const
 {
   const double dx = poi_.x - p.x, dy = poi_.y - p.y;
@@ -223,19 +227,20 @@ double OutdoorExecutor::poiYawRate(const Vec3 & p, const Vec3 & v) const
   }
   return (dy * v.x - dx * v.y) / r2;
 }
-
+// Prevedie GPS suradnice na lokalne suradnice misie.
 Vec3 OutdoorExecutor::llaToLocal(const LatLonAlt & g) const
 {
   const Vec3 e = ltp_.toEnu(g);
   return {e.x + geo_offset_.x, e.y + geo_offset_.y, e.z + geo_offset_.z};
 }
-
+// Prevedie lokalne suradnice misie na GPS suradnice.
 LatLonAlt OutdoorExecutor::localToLla(const Vec3 & p) const
 {
   return ltp_.toLla({p.x - geo_offset_.x, p.y - geo_offset_.y, p.z - geo_offset_.z});
 }
 
 // POI a rohy stvorca. Volane raz vo WAIT_ORIGIN, ked je znamy pociatok aj miesto vzletu.
+// Pripravi POI, rohy stvorca a trajektoriu osmicky.
 bool OutdoorExecutor::setupMissionGeometry(const VehicleState & st)
 {
   // MAVROS local (EKF origin) a ENU od home (ltp_) su rovnobezne ramce, mozu byt posunute
@@ -255,7 +260,7 @@ bool OutdoorExecutor::setupMissionGeometry(const VehicleState & st)
     p_.poi_use_latlon ? "parameter lat/lon" : "parameter posun");
   log(LogLevel::Info, b);
 
-  // Rohy: posun +-S/2 od POI -> lat/lon (tak ako by ich zadal clovek) -> local ENU.
+  // Rohy: posun +-S/2 od POI -> lat/lon -> local ENU.
   // Pouzivaju sa oba smery prevodu; vysledok je ten isty ako priamy posun v ENU.
   const double h = p_.square_side / 2.0, z = launch_.z + p_.altitude;
   const double off[4][2] = {{-h, h}, {h, h}, {h, -h}, {-h, -h}};   // W1 SZ, W2 SV, W3 JV, W4 JZ
@@ -295,7 +300,7 @@ bool OutdoorExecutor::setupMissionGeometry(const VehicleState & st)
   log(r_max > p_.geofence_radius ? LogLevel::Error : LogLevel::Info, b);
   return r_max <= p_.geofence_radius;
 }
-
+// Pripravi novy priamy usek letu.
 void OutdoorExecutor::startLeg(std::size_t i, const Vec3 & from)
 {
   leg_i_ = i;
@@ -308,14 +313,14 @@ void OutdoorExecutor::startLeg(std::size_t i, const Vec3 & from)
     leg_.length(), leg_.duration(), i == 0 ? ", nos na POI" : "");
   log(LogLevel::Info, b);
 }
-
+// Vypocita vysku dronu nad miestom vzletu.
 double OutdoorExecutor::heightAboveLaunch(const VehicleState & st) const
 {
   // rel_alt = vyska nad home podla ArduPilota; local z - launch z = to iste z EKF.
   // Riadi sa local z (tak posielame setpointy), rel_alt sa vypisuje na kontrolu.
   return st.pos.z - launch_.z;
 }
-
+// Skontroluje, ci je mozne odoslat alebo zopakovat poziadavku.
 bool OutdoorExecutor::requestDue(double now) const
 {
   if (req_sent_t_ < 0.0) {
@@ -324,7 +329,7 @@ bool OutdoorExecutor::requestDue(double now) const
   const double since = now - req_sent_t_;
   return (vehicle_.requestStatus() == RequestStatus::Failed && since > 1.0) || since > p_.request_retry;
 }
-
+// Zaznamena odoslanie poziadavky a zvysi pocet pokusov.
 void OutdoorExecutor::markRequestSent(double now)
 {
   if (req_attempts_ > 0) {
@@ -334,7 +339,7 @@ void OutdoorExecutor::markRequestSent(double now)
   req_sent_t_ = now;
   ++req_attempts_;
 }
-
+// Zapise spravu do logu, ak je dostupny zapisovac.
 void OutdoorExecutor::log(LogLevel l, const std::string & msg)
 {
   if (logger_) {
@@ -342,9 +347,8 @@ void OutdoorExecutor::log(LogLevel l, const std::string & msg)
   }
 }
 
-// ---------------------------------------------------------------------------
 // stavy
-// ---------------------------------------------------------------------------
+// Caka na spojenie s dronom.
 void OutdoorExecutor::onWaitConnection(const VehicleState & st)
 {
   if (st.armed) {
@@ -356,6 +360,7 @@ void OutdoorExecutor::onWaitConnection(const VehicleState & st)
   }
 }
 
+// Caka na splnenie poziadaviek na kvalitu GPS.
 void OutdoorExecutor::onWaitGps(const VehicleState & st, double now)
 {
   std::string why;
@@ -377,7 +382,7 @@ void OutdoorExecutor::onWaitGps(const VehicleState & st, double now)
     last_wait_log_ = now;
   }
 }
-
+// Nastavi pociatocny bod a pripravi geometriu misie.
 void OutdoorExecutor::onWaitOrigin(const VehicleState & st, double now)
 {
   LatLonAlt origin;
@@ -414,7 +419,7 @@ void OutdoorExecutor::onWaitOrigin(const VehicleState & st, double now)
   }
   enter(State::SET_MODE, "vzlet na " + fmt("%.1f", p_.altitude) + " m nad miestom vzletu");
 }
-
+// Nastavi rezim GUIDED.
 void OutdoorExecutor::onSetMode(const VehicleState & st, double now)
 {
   if (st.mode == "GUIDED") {
@@ -430,7 +435,7 @@ void OutdoorExecutor::onSetMode(const VehicleState & st, double now)
     markRequestSent(now);
   }
 }
-
+// Aktivuje motory dronu.
 void OutdoorExecutor::onArm(const VehicleState & st, double now)
 {
   if (st.armed) {
@@ -450,7 +455,7 @@ void OutdoorExecutor::onArm(const VehicleState & st, double now)
     markRequestSent(now);
   }
 }
-
+// Riadi vzlet do pozadovanej vysky.
 void OutdoorExecutor::onTakeoff(const VehicleState & st, double now)
 {
   const double h = heightAboveLaunch(st);
@@ -483,7 +488,7 @@ void OutdoorExecutor::onTakeoff(const VehicleState & st, double now)
     markRequestSent(now);
   }
 }
-
+// Udrziava dron na cielovej pozicii.
 void OutdoorExecutor::onHold(const VehicleState & st, double now)
 {
   send(hold_target_, yaw_sp_);
@@ -506,7 +511,7 @@ void OutdoorExecutor::onHold(const VehicleState & st, double now)
       fmt("%.2f m", err) + ")", true);
   }
 }
-
+// Nataca dron na pozadovany smer.
 bool OutdoorExecutor::alignStep(const VehicleState & st, double now, const Vec3 & pos,
   double target, const std::string & what)
 {
@@ -529,6 +534,7 @@ bool OutdoorExecutor::alignStep(const VehicleState & st, double now, const Vec3 
   return false;
 }
 
+// Natoci dron smerom k bodu POI.
 void OutdoorExecutor::onPoiAlign(const VehicleState & st, double now)
 {
   // smer na POI z bodu drzania; ak je dron priamo nad POI, natoci sa tak,
@@ -539,7 +545,7 @@ void OutdoorExecutor::onPoiAlign(const VehicleState & st, double now)
     startLeg(0, hold_target_);
   }
 }
-
+// Riadi let po stvorci a kontroluje presnost pohybu.
 void OutdoorExecutor::onSquare(const VehicleState & st, double now)
 {
   const double t = now - leg_t0_;
@@ -591,7 +597,7 @@ void OutdoorExecutor::onSquare(const VehicleState & st, double now)
     doAbort(wpName(leg_i_) + " nedosiahnuty (chyba " + fmt("%.2f m)", dist(st.pos, goal)), true);
   }
 }
-
+// Pripravi presun do stredu osmicky.
 void OutdoorExecutor::startFig8Entry(const Vec3 & from)
 {
   enter(State::FIG8_ENTRY, "presun do stredu osmicky nad POI");
@@ -601,7 +607,7 @@ void OutdoorExecutor::startFig8Entry(const Vec3 & from)
   entry_yaw0_ = yaw_sp_;
   entry_yaw1_ = unwrapNear(fig8_.tangentYawAt(0.0), yaw_sp_);
 }
-
+// Riadi presun do stredu osmicky.
 void OutdoorExecutor::onFig8Entry(const VehicleState & st, double now)
 {
   const double t = now - leg_t0_;
@@ -619,7 +625,7 @@ void OutdoorExecutor::onFig8Entry(const VehicleState & st, double now)
     doAbort("stred osmicky nedosiahnuty (chyba " + fmt("%.2f m)", err), true);
   }
 }
-
+// Nastavi pociatocne natocenie pred letom po osmicke.
 void OutdoorExecutor::onFig8Align(const VehicleState & st, double now)
 {
   if (alignStep(st, now, fig8_.c, fig8_.tangentYawAt(0.0), "tangenta osmicky")) {
@@ -629,7 +635,7 @@ void OutdoorExecutor::onFig8Align(const VehicleState & st, double now)
     fig8_stats_ = Fig8Stats{};
   }
 }
-
+// Riadi let po osmicke a sleduje odchylku od trajektorie.
 void OutdoorExecutor::onFig8(const VehicleState & st, double now)
 {
   // Novy setpoint z rovnic kazdy tick (tick = ROS timer v node, 20 Hz).
@@ -691,13 +697,14 @@ void OutdoorExecutor::onFig8(const VehicleState & st, double now)
   }
 }
 
+// Pripravi navrat na miesto vzletu.
 void OutdoorExecutor::startReturn(const Vec3 & from)
 {
   enter(State::RETURN, "navrat nad miesto vzletu");
   leg_ = StraightLeg(from, hold_target_, p_.speed, p_.accel);
   leg_t0_ = now_;
 }
-
+// Riadi navrat dronu na miesto vzletu.
 void OutdoorExecutor::onReturn(const VehicleState & st, double now)
 {
   const double t = now - leg_t0_;
@@ -718,7 +725,7 @@ void OutdoorExecutor::onReturn(const VehicleState & st, double now)
     doAbort("navrat nad miesto vzletu sa nepodaril (chyba " + fmt("%.2f m)", err), true);
   }
 }
-
+// Riadi pristatie a kontroluje ukoncenie letu.
 void OutdoorExecutor::onLand(const VehicleState & st, double now)
 {
   if (!st.armed) {
@@ -742,7 +749,7 @@ void OutdoorExecutor::onLand(const VehicleState & st, double now)
       false);
   }
 }
-
+// Spracuje prerusenie misie a pripadnu zmenu rezimu.
 void OutdoorExecutor::onAbort(const VehicleState & st, double now)
 {
   // command_on_abort_ = false: pilot prevzal / spojenie stratene -> NIC neposielame.
@@ -772,4 +779,4 @@ void OutdoorExecutor::onAbort(const VehicleState & st, double now)
   }
 }
 
-}  // namespace lrs_control
+}
