@@ -1,0 +1,9 @@
+/**/follow_mission:
+  ros__parameters:
+    search_alt: 10.0
+    follow_alt: 6.0
+    lost_timeout: 1.5
+    confirm_count: 3
+    confirm_window: 1.0
+    abort_mode: "LOITER"
+    # TODO: dalsie parametre

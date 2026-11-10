@@ -1,0 +1,12 @@
+# Second example mission -- exercises every task type on a different route
+# through the hangar than missions/exam_example.csv, to prove the mission
+# file really drives the planner rather than something hardcoded.
+# x, y, z, precision, task -- map frame (maps/FEI_LRS_PCD/map.pcd), metres and degrees.
+x,y,z,precision,task
+13.00,7.00,1.00,soft,takeoff
+13.60,11.50,1.50,soft,-
+2.81,8.15,1.75,hard,yaw270
+4.84,9.74,1.25,soft,-
+8.84,6.90,2.00,hard,landtakeoff
+4.84,5.37,1.00,soft,yaw180
+13.60,1.50,2.00,hard,land
