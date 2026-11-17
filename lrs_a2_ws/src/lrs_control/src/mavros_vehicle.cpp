@@ -46,7 +46,7 @@ MavrosVehicle::MavrosVehicle(rclcpp::Node & node, const FrameTransform & tf)
 
   // Sleduje stav spojenia rezim a armovanie dronu
   state_sub_ = node_.create_subscription<mavros_msgs::msg::State>(
-    "/mavros/state", qos,
+    "mavros/state", qos,
     [this](const mavros_msgs::msg::State & m) {
       const double t = node_.now().seconds();
       std::lock_guard<std::mutex> lk(mtx_);
@@ -58,7 +58,7 @@ MavrosVehicle::MavrosVehicle(rclcpp::Node & node, const FrameTransform & tf)
 
   // Nacita polohu a orientaciu a prevedie ich do map frame
   pose_sub_ = node_.create_subscription<geometry_msgs::msg::PoseStamped>(
-    "/mavros/local_position/pose", qos,
+    "mavros/local_position/pose", qos,
     [this](const geometry_msgs::msg::PoseStamped & m) {
       const double t = node_.now().seconds();
       std::lock_guard<std::mutex> lk(mtx_);
@@ -71,7 +71,7 @@ MavrosVehicle::MavrosVehicle(rclcpp::Node & node, const FrameTransform & tf)
 
   // Nacita rychlost a prevedie ju do map frame
   vel_sub_ = node_.create_subscription<geometry_msgs::msg::TwistStamped>(
-    "/mavros/local_position/velocity_local", qos,
+    "mavros/local_position/velocity_local", qos,
     [this](const geometry_msgs::msg::TwistStamped & m) {
       std::lock_guard<std::mutex> lk(mtx_);
       st_.vel = tf_.dirToMap({m.twist.linear.x, m.twist.linear.y, m.twist.linear.z});
@@ -80,7 +80,7 @@ MavrosVehicle::MavrosVehicle(rclcpp::Node & node, const FrameTransform & tf)
   // --- A1.3: GPS, home, kompas -------------------------------------------
   // Nacita GPS polohu stav GPS a odhad horizontalnej presnosti
   gps_sub_ = node_.create_subscription<sensor_msgs::msg::NavSatFix>(
-    "/mavros/global_position/global", qos,
+    "mavros/global_position/global", qos,
     [this](const sensor_msgs::msg::NavSatFix & m) {
       std::lock_guard<std::mutex> lk(mtx_);
       st_.has_gps = true;
@@ -95,7 +95,7 @@ MavrosVehicle::MavrosVehicle(rclcpp::Node & node, const FrameTransform & tf)
   // Nacita pocet viditelnych satelitov
   // Ak MAVROS temu nema hodnota zostane -1
   gps_raw_sub_ = node_.create_subscription<mavros_msgs::msg::GPSRAW>(
-    "/mavros/gpsstatus/gps1/raw", qos,
+    "mavros/gpsstatus/gps1/raw", qos,
     [this](const mavros_msgs::msg::GPSRAW & m) {
       std::lock_guard<std::mutex> lk(mtx_);
       st_.satellites = m.satellites_visible;
@@ -103,7 +103,7 @@ MavrosVehicle::MavrosVehicle(rclcpp::Node & node, const FrameTransform & tf)
 
   // Nacita vysku nad domovskym bodom
   rel_alt_sub_ = node_.create_subscription<std_msgs::msg::Float64>(
-    "/mavros/global_position/rel_alt", qos,
+    "mavros/global_position/rel_alt", qos,
     [this](const std_msgs::msg::Float64 & m) {
       std::lock_guard<std::mutex> lk(mtx_);
       st_.has_rel_alt = true;
@@ -112,7 +112,7 @@ MavrosVehicle::MavrosVehicle(rclcpp::Node & node, const FrameTransform & tf)
 
   // Nacita smer kompasu v stupnoch
   compass_sub_ = node_.create_subscription<std_msgs::msg::Float64>(
-    "/mavros/global_position/compass_hdg", qos,
+    "mavros/global_position/compass_hdg", qos,
     [this](const std_msgs::msg::Float64 & m) {
       std::lock_guard<std::mutex> lk(mtx_);
       st_.has_compass = true;
@@ -123,7 +123,7 @@ MavrosVehicle::MavrosVehicle(rclcpp::Node & node, const FrameTransform & tf)
   // Best-effort/volatile odber by ju po starte nodu nedostal -> rovnake QoS ako publisher.
   // Nacita domovsku GPS polohu dronu
   home_sub_ = node_.create_subscription<mavros_msgs::msg::HomePosition>(
-    "/mavros/home_position/home", rclcpp::QoS(rclcpp::KeepLast(1)).reliable().transient_local(),
+    "mavros/home_position/home", rclcpp::QoS(rclcpp::KeepLast(1)).reliable().transient_local(),
     [this](const mavros_msgs::msg::HomePosition & m) {
       std::lock_guard<std::mutex> lk(mtx_);
       st_.has_home = true;
@@ -131,13 +131,13 @@ MavrosVehicle::MavrosVehicle(rclcpp::Node & node, const FrameTransform & tf)
     }, opts);
 
   // Vytvori publisher cielovych poloh pre riadenie dronu
-  sp_pub_ = node_.create_publisher<PositionTarget>("/mavros/setpoint_raw/local", 10);
+  sp_pub_ = node_.create_publisher<PositionTarget>("mavros/setpoint_raw/local", 10);
 
   // Pripravi sluzby na zmenu rezimu armovanie vzlet a pristatie
-  mode_cli_ = makeClient<mavros_msgs::srv::SetMode>(node_, "/mavros/set_mode", service_group_);
-  arm_cli_ = makeClient<mavros_msgs::srv::CommandBool>(node_, "/mavros/cmd/arming", service_group_);
-  takeoff_cli_ = makeClient<mavros_msgs::srv::CommandTOL>(node_, "/mavros/cmd/takeoff", service_group_);
-  land_cli_ = makeClient<mavros_msgs::srv::CommandTOL>(node_, "/mavros/cmd/land", service_group_);
+  mode_cli_ = makeClient<mavros_msgs::srv::SetMode>(node_, "mavros/set_mode", service_group_);
+  arm_cli_ = makeClient<mavros_msgs::srv::CommandBool>(node_, "mavros/cmd/arming", service_group_);
+  takeoff_cli_ = makeClient<mavros_msgs::srv::CommandTOL>(node_, "mavros/cmd/takeoff", service_group_);
+  land_cli_ = makeClient<mavros_msgs::srv::CommandTOL>(node_, "mavros/cmd/land", service_group_);
 }
 
 // Vrati aktualny stav dronu aj s vekom poslednych sprav

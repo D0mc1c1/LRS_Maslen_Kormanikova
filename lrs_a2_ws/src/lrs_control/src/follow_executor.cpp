@@ -1,9 +1,20 @@
 #include "lrs_control/follow_executor.hpp"
 
+#include <cstdio>
 #include <utility>
 
 namespace lrs_control
 {
+
+namespace
+{
+std::string fmt(const char * f, double v)
+{
+  char b[32];
+  std::snprintf(b, sizeof(b), f, v);
+  return b;
+}
+}
 
 FollowExecutor::FollowExecutor(Vehicle & vehicle, FollowParams params, Logger log)
 : vehicle_(vehicle), p_(std::move(params)), log_(std::move(log))
@@ -26,51 +37,177 @@ const char * FollowExecutor::name(State s)
 
 void FollowExecutor::tick(double now, const std::vector<TargetObs> & obs)
 {
-  // TODO
-  (void)now;
-  (void)obs;
+  now_ = now;
+  const VehicleState st = vehicle_.state();
+
+  // spojenie stratene -> prestat riadit
+  if (controlState()) {
+    std::string why;
+    if (!linkOk(st, p_.state_timeout, p_.pose_timeout, why)) {
+      enter(State::ABORT, "spojenie stratene: " + why);
+    }
+  }
+  // pilot prevzal riadenie -> nebojovat s nim
+  if (airborneState() && (st.mode != "GUIDED" || !st.armed)) {
+    enter(State::ABORT, "mod zmeneny zvonka na '" + st.mode + "'");
+  }
+
+  switch (state_) {
+    case State::WAIT_CONNECTION: onWaitConnection(st); break;
+    case State::SET_MODE: onSetMode(st, now); break;
+    case State::ARM: onArm(st, now); break;
+    case State::TAKEOFF: onTakeoff(st, now); break;
+    case State::SEARCH: onSearch(st, now, obs); break;
+    case State::TRACK: onTrack(st, now, obs); break;
+    case State::ABORT: onAbort(st, now); break;
+  }
 }
 
 void FollowExecutor::abort(const std::string & why)
 {
-  // TODO
-  (void)why;
+  // TODO: abort_mode (LOITER / BRAKE / RTL)
+  enter(State::ABORT, why);
 }
 
+// ---------------------------------------------------------------------------
+// pomocne
+// ---------------------------------------------------------------------------
+void FollowExecutor::enter(State s, const std::string & why)
+{
+  if (state_ == State::ABORT) {
+    return;
+  }
+  if (log_) {
+    log_(std::string(name(state_)) + " -> " + name(s) + "  (" + why + ")");
+  }
+  state_ = s;
+  state_t0_ = now_;
+  req_sent_t_ = -1.0;
+}
+
+bool FollowExecutor::requestDue() const
+{
+  if (req_sent_t_ < 0.0) {
+    return true;
+  }
+  const double since = now_ - req_sent_t_;
+  return (vehicle_.requestStatus() == RequestStatus::Failed && since > 1.0) ||
+         since > p_.request_retry;
+}
+
+void FollowExecutor::markRequestSent()
+{
+  req_sent_t_ = now_;
+}
+
+bool FollowExecutor::controlState() const
+{
+  return state_ == State::SET_MODE || state_ == State::ARM || state_ == State::TAKEOFF ||
+         airborneState();
+}
+
+bool FollowExecutor::airborneState() const
+{
+  return state_ == State::SEARCH || state_ == State::TRACK;
+}
+
+// ---------------------------------------------------------------------------
+// stavy
+// ---------------------------------------------------------------------------
 void FollowExecutor::onWaitConnection(const VehicleState & st)
 {
-  // TODO
-  (void)st;
+  if (st.armed) {
+    enter(State::ABORT, "dron je uz armnuty, spusti program s dronom na zemi");
+    return;
+  }
+  if (st.connected && st.has_pose) {
+    launch_ = st.pos;
+    launch_yaw_ = st.yaw;
+    hover_ = {launch_.x, launch_.y, launch_.z + p_.search_alt};
+    enter(State::SET_MODE, "MAVROS connected, miesto vzletu x " + fmt("%.2f", launch_.x) +
+      " y " + fmt("%.2f", launch_.y));
+  }
 }
 
 void FollowExecutor::onSetMode(const VehicleState & st, double now)
 {
-  // TODO
-  (void)st;
   (void)now;
+  if (st.mode == "GUIDED") {
+    enter(State::ARM, "GUIDED potvrdeny");
+    return;
+  }
+  if (inState() > p_.mode_timeout) {
+    enter(State::ABORT, "GUIDED sa nepodarilo nastavit");
+    return;
+  }
+  if (requestDue()) {
+    vehicle_.requestMode("GUIDED");
+    markRequestSent();
+  }
 }
 
 void FollowExecutor::onArm(const VehicleState & st, double now)
 {
-  // TODO
-  (void)st;
   (void)now;
+  if (st.armed) {
+    enter(State::TAKEOFF, "armed potvrdeny, vzlet na " + fmt("%.1f m", p_.search_alt));
+    return;
+  }
+  if (st.mode != "GUIDED") {
+    enter(State::SET_MODE, "mod sa zmenil na '" + st.mode + "'");
+    return;
+  }
+  if (inState() > p_.arm_timeout) {
+    enter(State::ABORT, "arm sa nepodaril (prearm checky v konzole SITL)");
+    return;
+  }
+  if (requestDue()) {
+    vehicle_.requestArm(true);
+    markRequestSent();
+  }
 }
 
 void FollowExecutor::onTakeoff(const VehicleState & st, double now)
 {
-  // TODO
-  (void)st;
   (void)now;
+  const double h = st.pos.z - launch_.z;
+  if (h >= p_.search_alt - p_.takeoff_tol) {
+    enter(State::SEARCH, "vyska dosiahnuta " + fmt("%.2f m", h));
+    return;
+  }
+  if (st.mode != "GUIDED" && inState() > 1.0) {
+    enter(State::ABORT, "pocas vzletu sa mod zmenil na '" + st.mode + "'");
+    return;
+  }
+  if (!st.armed && inState() > 2.0) {
+    enter(State::SET_MODE, "dron sa disarmol pred vzletom, opakujem arm");
+    return;
+  }
+  if (inState() > p_.takeoff_timeout) {
+    enter(State::ABORT, "vzlet nedosiahol " + fmt("%.1f m", p_.search_alt) +
+      " (je " + fmt("%.2f m", h) + ")");
+    return;
+  }
+  // takeoff sa neposiela znova, ked ho ArduPilot prijal a dron stupa
+  const auto rs = vehicle_.requestStatus();
+  const bool resend = req_sent_t_ < 0.0 ||
+    (rs == RequestStatus::Failed && now_ - req_sent_t_ > 1.0) ||
+    (rs == RequestStatus::Pending && now_ - req_sent_t_ > p_.request_retry);
+  if (resend) {
+    vehicle_.requestTakeoff(hover_.z);
+    markRequestSent();
+  }
 }
 
 void FollowExecutor::onSearch(
   const VehicleState & st, double now, const std::vector<TargetObs> & obs)
 {
-  // TODO
+  // TODO: vyhladavaci vzor, potvrdenie cielu -> TRACK
+  // zatial len visi nad miestom vzletu
   (void)st;
   (void)now;
   (void)obs;
+  vehicle_.sendPositionTarget(hover_, launch_yaw_);
 }
 
 void FollowExecutor::onTrack(

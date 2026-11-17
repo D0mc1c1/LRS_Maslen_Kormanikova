@@ -6,4 +6,7 @@
     confirm_count: 3
     confirm_window: 1.0
     abort_mode: "LOITER"
+    takeoff_tol: 0.3
+    state_timeout: 3.0    # pomala simulacia: 8.0
+    pose_timeout: 1.0     # pomala simulacia: 2.0
     # TODO: dalsie parametre
