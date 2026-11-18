@@ -87,6 +87,7 @@ ament_target_dependencies(follow_mission rclcpp mavros_msgs geometry_msgs sensor
   std_msgs std_srvs nav_msgs)
 
 add_executable(fake_target src/fake_target_node.cpp)
+target_link_libraries(fake_target lrs_control_core)
 ament_target_dependencies(fake_target rclcpp geometry_msgs)
 
 add_executable(follow_sim test/follow_sim.cpp)

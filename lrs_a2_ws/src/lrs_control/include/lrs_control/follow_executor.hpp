@@ -1,4 +1,5 @@
 #pragma once
+#include <deque>
 #include <functional>
 #include <string>
 #include <vector>
@@ -100,6 +101,9 @@ private:
   std::size_t leg_i_{0};        // index bodu, ku ktoremu dron leti
   StraightLeg leg_;
   double leg_t0_{0.0};
+
+  std::deque<double> confirm_t_;  // casy detekcii v okne confirm_window
+  TargetObs last_obs_{};
 };
 
 }  // namespace lrs_control

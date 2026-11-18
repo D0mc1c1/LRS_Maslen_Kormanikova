@@ -219,6 +219,7 @@ void FollowExecutor::startSearch(const VehicleState & st, const std::string & wh
   sp.cam_aspect = p_.cam_aspect;
   pattern_ = expandingSquare(center, sp);
   ++pattern_version_;
+  confirm_t_.clear();
   startLeg(0, st.pos);
   enter(State::SEARCH, why + ", vzor " + std::to_string(pattern_.size()) + " bodov, rozostup " +
     fmt("%.1f m", searchSpacing(sp)));
@@ -234,9 +235,21 @@ void FollowExecutor::startLeg(std::size_t i, const Vec3 & from)
 void FollowExecutor::onSearch(
   const VehicleState & st, double now, const std::vector<TargetObs> & obs)
 {
-  // TODO: potvrdenie cielu -> TRACK
   (void)st;
-  (void)obs;
+
+  // potvrdenie cielu: aspon confirm_count detekcii za poslednych confirm_window s
+  for (const auto & o : obs) {
+    confirm_t_.push_back(o.t);
+  }
+  while (!confirm_t_.empty() && confirm_t_.front() < now - p_.confirm_window) {
+    confirm_t_.pop_front();
+  }
+  if (!obs.empty() && static_cast<int>(confirm_t_.size()) >= p_.confirm_count) {
+    last_obs_ = obs.back();
+    enter(State::TRACK, "ciel potvrdeny (" + std::to_string(confirm_t_.size()) +
+      " detekcii), rover x " + fmt("%.1f", last_obs_.p.x) + " y " + fmt("%.1f", last_obs_.p.y));
+    return;
+  }
 
   // setpoint sa posuva po useku, rychlost ide ako feedforward
   const double t = now - leg_t0_;
@@ -262,10 +275,15 @@ void FollowExecutor::onSearch(
 void FollowExecutor::onTrack(
   const VehicleState & st, double now, const std::vector<TargetObs> & obs)
 {
-  // TODO
+  // TODO: alfa-beta filter, predikcia, strata cielu
+  // zatial: nad poslednu detekciu vo vyske follow_alt
   (void)st;
   (void)now;
-  (void)obs;
+  if (!obs.empty()) {
+    last_obs_ = obs.back();
+  }
+  const Vec3 sp{last_obs_.p.x, last_obs_.p.y, launch_.z + p_.follow_alt};
+  vehicle_.sendPositionTarget(sp, launch_yaw_);
 }
 
 void FollowExecutor::onAbort(const VehicleState & st, double now)

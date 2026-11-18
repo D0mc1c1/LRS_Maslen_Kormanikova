@@ -32,6 +32,21 @@ inline double searchSpacing(const SearchPatternParams & p)
   return std::min(w, h) * (1.0 - std::clamp(p.overlap, 0.0, 0.9));
 }
 
+// je bod v zabere kamery? rel = bod - dron (ENU), yaw drona (ENU), h = vyska nad zemou.
+// sirka obrazu ide do boku drona, vyska obrazu dopredu
+inline bool inFootprint(const Vec3 & rel, double yaw, double h, const SearchPatternParams & p)
+{
+  if (h < 0.5) {
+    return false;
+  }
+  const double c = std::cos(yaw), s = std::sin(yaw);
+  const double fwd = c * rel.x + s * rel.y;
+  const double left = -s * rel.x + c * rel.y;
+  const double half_w = h * std::tan(deg2rad(p.cam_hfov_deg) / 2.0);
+  const double half_h = half_w * p.cam_aspect;
+  return std::abs(left) <= half_w && std::abs(fwd) <= half_h;
+}
+
 // prvy bod je stred, potom rohy spiraly vo vyske center.z
 inline std::vector<Vec3> expandingSquare(const Vec3 & center, const SearchPatternParams & p)
 {
