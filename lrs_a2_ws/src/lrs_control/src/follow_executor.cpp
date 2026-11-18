@@ -116,6 +116,11 @@ bool FollowExecutor::airborneState() const
 // ---------------------------------------------------------------------------
 void FollowExecutor::onWaitConnection(const VehicleState & st)
 {
+  if (now_ - wait_log_t_ > 5.0) {
+    wait_log_t_ = now_;
+    log_(std::string("cakam na MAVROS: connected ") + (st.connected ? "ano" : "nie") +
+      ", poloha " + (st.has_pose ? "ano" : "nie"));
+  }
   if (st.armed) {
     enter(State::ABORT, "dron je uz armnuty, spusti program s dronom na zemi");
     return;
@@ -172,7 +177,7 @@ void FollowExecutor::onTakeoff(const VehicleState & st, double now)
   (void)now;
   const double h = st.pos.z - launch_.z;
   if (h >= p_.search_alt - p_.takeoff_tol) {
-    enter(State::SEARCH, "vyska dosiahnuta " + fmt("%.2f m", h));
+    startSearch(st, "vyska dosiahnuta " + fmt("%.2f m", h));
     return;
   }
   if (st.mode != "GUIDED" && inState() > 1.0) {
@@ -199,15 +204,59 @@ void FollowExecutor::onTakeoff(const VehicleState & st, double now)
   }
 }
 
+// ---------------------------------------------------------------------------
+// hladanie
+// ---------------------------------------------------------------------------
+void FollowExecutor::startSearch(const VehicleState & st, const std::string & why)
+{
+  // stred vzoru = aktualna poloha drona vo vyske hladania
+  const Vec3 center{st.pos.x, st.pos.y, launch_.z + p_.search_alt};
+  SearchPatternParams sp;
+  sp.altitude = p_.search_alt;
+  sp.overlap = p_.search_overlap;
+  sp.max_radius = p_.search_max_radius;
+  sp.cam_hfov_deg = p_.cam_hfov_deg;
+  sp.cam_aspect = p_.cam_aspect;
+  pattern_ = expandingSquare(center, sp);
+  ++pattern_version_;
+  startLeg(0, st.pos);
+  enter(State::SEARCH, why + ", vzor " + std::to_string(pattern_.size()) + " bodov, rozostup " +
+    fmt("%.1f m", searchSpacing(sp)));
+}
+
+void FollowExecutor::startLeg(std::size_t i, const Vec3 & from)
+{
+  leg_i_ = i;
+  leg_ = StraightLeg(from, pattern_[i], p_.search_speed, p_.search_accel);
+  leg_t0_ = now_;
+}
+
 void FollowExecutor::onSearch(
   const VehicleState & st, double now, const std::vector<TargetObs> & obs)
 {
-  // TODO: vyhladavaci vzor, potvrdenie cielu -> TRACK
-  // zatial len visi nad miestom vzletu
+  // TODO: potvrdenie cielu -> TRACK
   (void)st;
-  (void)now;
   (void)obs;
-  vehicle_.sendPositionTarget(hover_, launch_yaw_);
+
+  // setpoint sa posuva po useku, rychlost ide ako feedforward
+  const double t = now - leg_t0_;
+  TrajectorySetpoint sp;
+  sp.p = leg_.pos(t);
+  sp.v = leg_.vel(t);
+  sp.yaw = launch_yaw_;
+  vehicle_.sendTrajectorySetpoint(sp);
+
+  if (t < leg_.duration() || pattern_.size() < 2) {
+    return;
+  }
+  if (leg_i_ + 1 < pattern_.size()) {
+    startLeg(leg_i_ + 1, leg_.b);
+    log_("SEARCH: roh " + std::to_string(leg_i_) + "/" + std::to_string(pattern_.size() - 1) +
+      " x " + fmt("%.1f", leg_.b.x) + " y " + fmt("%.1f", leg_.b.y));
+  } else {
+    log_("SEARCH: vzor prejdeny, opakujem od stredu");
+    startLeg(0, leg_.b);
+  }
 }
 
 void FollowExecutor::onTrack(

@@ -1,10 +1,11 @@
-// TODO: odber target/pose, ~/abort, ~/estimate, ~/search_path
+// TODO: odber target/pose, ~/abort, ~/estimate
 #include <chrono>
 #include <memory>
 #include <stdexcept>
 #include <string>
 #include <vector>
 
+#include <nav_msgs/msg/path.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <std_msgs/msg/string.hpp>
 
@@ -36,9 +37,18 @@ public:
     p.mode_timeout = declare_parameter("mode_timeout", p.mode_timeout);
     p.arm_timeout = declare_parameter("arm_timeout", p.arm_timeout);
     p.takeoff_timeout = declare_parameter("takeoff_timeout", p.takeoff_timeout);
+    p.search_speed = declare_parameter("search_speed", p.search_speed);
+    p.search_accel = declare_parameter("search_accel", p.search_accel);
+    p.search_overlap = declare_parameter("search_overlap", p.search_overlap);
+    p.search_max_radius = declare_parameter("search_max_radius", p.search_max_radius);
+    p.cam_hfov_deg = declare_parameter("cam_hfov_deg", p.cam_hfov_deg);
+    p.cam_aspect = declare_parameter("cam_aspect", p.cam_aspect);
 
     if (p.search_alt < 2.0 || p.search_alt > 30.0) {
       throw std::runtime_error("search_alt mimo rozsahu 2..30 m");
+    }
+    if (p.search_speed <= 0.0 || p.search_speed > 5.0) {
+      throw std::runtime_error("search_speed mimo rozsahu 0..5 m/s");
     }
     if (p.state_timeout < 1.5) {
       throw std::runtime_error("state_timeout < 1.5 s: mavros/state chodi len ~1 Hz");
@@ -50,6 +60,8 @@ public:
       *vehicle_, p, [this](const std::string & m) {RCLCPP_INFO(get_logger(), "%s", m.c_str());});
 
     state_pub_ = create_publisher<std_msgs::msg::String>("~/state",
+        rclcpp::QoS(rclcpp::KeepLast(1)).reliable().transient_local());
+    path_pub_ = create_publisher<nav_msgs::msg::Path>("~/search_path",
         rclcpp::QoS(rclcpp::KeepLast(1)).reliable().transient_local());
 
     control_group_ = create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
@@ -73,11 +85,35 @@ private:
       m.data = FollowExecutor::name(s);
       state_pub_->publish(m);
     }
+    if (executor_->searchPathVersion() != path_version_) {
+      path_version_ = executor_->searchPathVersion();
+      publishSearchPath();
+    }
+  }
+
+  // vzor pre RViz, lokalne ENU drona
+  void publishSearchPath()
+  {
+    nav_msgs::msg::Path path;
+    path.header.stamp = now();
+    path.header.frame_id = "map";
+    for (const auto & v : executor_->searchPath()) {
+      geometry_msgs::msg::PoseStamped ps;
+      ps.header = path.header;
+      ps.pose.position.x = v.x;
+      ps.pose.position.y = v.y;
+      ps.pose.position.z = v.z;
+      ps.pose.orientation.w = 1.0;
+      path.poses.push_back(ps);
+    }
+    path_pub_->publish(path);
   }
 
   std::unique_ptr<lrs_control::MavrosVehicle> vehicle_;
   std::unique_ptr<FollowExecutor> executor_;
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr state_pub_;
+  rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr path_pub_;
+  int path_version_{0};
   rclcpp::CallbackGroup::SharedPtr control_group_;
   rclcpp::TimerBase::SharedPtr control_timer_;
   FollowExecutor::State last_state_{FollowExecutor::State::ABORT};

@@ -3,6 +3,8 @@
 #include <string>
 #include <vector>
 
+#include "lrs_control/search_pattern.hpp"
+#include "lrs_control/trajectory.hpp"
 #include "lrs_control/vehicle.hpp"
 
 namespace lrs_control
@@ -32,6 +34,14 @@ struct FollowParams
   double mode_timeout{20.0};
   double arm_timeout{60.0};
   double takeoff_timeout{40.0};
+
+  // hladanie
+  double search_speed{1.5};        // [m/s] rychlost na ramenach
+  double search_accel{0.8};        // [m/s^2]
+  double search_overlap{0.3};      // prekrytie pasov 0..0.9
+  double search_max_radius{25.0};  // [m] dosah vzoru od stredu
+  double cam_hfov_deg{60.0};
+  double cam_aspect{0.75};
   // TODO: dalsie parametre
 };
 
@@ -50,6 +60,9 @@ public:
   State state() const {return state_;}
   static const char * name(State s);
 
+  const std::vector<Vec3> & searchPath() const {return pattern_;}
+  int searchPathVersion() const {return pattern_version_;}
+
 private:
   void onWaitConnection(const VehicleState & st);
   void onSetMode(const VehicleState & st, double now);
@@ -58,6 +71,9 @@ private:
   void onSearch(const VehicleState & st, double now, const std::vector<TargetObs> & obs);
   void onTrack(const VehicleState & st, double now, const std::vector<TargetObs> & obs);
   void onAbort(const VehicleState & st, double now);
+
+  void startSearch(const VehicleState & st, const std::string & why);
+  void startLeg(std::size_t i, const Vec3 & from);
 
   void enter(State s, const std::string & why);
   double inState() const {return now_ - state_t0_;}
@@ -77,6 +93,13 @@ private:
   Vec3 launch_{};               // miesto vzletu (lokalne ENU drona)
   double launch_yaw_{0.0};
   Vec3 hover_{};                // nad miestom vzletu vo vyske search_alt
+  double wait_log_t_{-10.0};
+
+  std::vector<Vec3> pattern_;   // body vyhladavacieho vzoru
+  int pattern_version_{0};
+  std::size_t leg_i_{0};        // index bodu, ku ktoremu dron leti
+  StraightLeg leg_;
+  double leg_t0_{0.0};
 };
 
 }  // namespace lrs_control
