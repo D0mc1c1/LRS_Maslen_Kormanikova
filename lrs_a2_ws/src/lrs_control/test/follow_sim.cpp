@@ -1,9 +1,10 @@
 // Offline test FollowExecutor bez ROS a bez simulatora.
-// usage: follow_sim [takeoff|search|confirm|rc|linkloss]
-// TODO: sledovanie s filtrom, strata a opatovne najdenie
+// usage: follow_sim [takeoff|search|confirm|track [naive]|rc|linkloss]
+// TODO: strata a opatovne najdenie
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <deque>
 #include <random>
 #include <string>
 #include <vector>
@@ -42,13 +43,21 @@ static bool checkPattern(const lrs_control::FollowParams & p)
 int main(int argc, char ** argv)
 {
   const std::string sc = argc > 1 ? argv[1] : "takeoff";
-  if (sc != "takeoff" && sc != "search" && sc != "confirm" && sc != "rc" && sc != "linkloss") {
-    std::printf("usage: follow_sim [takeoff|search|confirm|rc|linkloss]\n");
+  if (sc != "takeoff" && sc != "search" && sc != "confirm" && sc != "track" && sc != "rc" &&
+    sc != "linkloss")
+  {
+    std::printf("usage: follow_sim [takeoff|search|confirm|track [naive]|rc|linkloss]\n");
     return 1;
   }
 
   lrs_control::SimVehicle veh({-10.0, -10.0, 0.0});
   lrs_control::FollowParams p;
+  const bool naive = argc > 2 && std::string(argv[2]) == "naive";
+  if (naive) {   // bez filtra: mieri na poslednu detekciu
+    p.track_alpha = 1.0;
+    p.track_beta = 0.0;
+    p.track_lead = 0.0;
+  }
   bool loop_done = false;
   FollowExecutor ex(veh, p, [&](const std::string & m) {
       if (m.find("vzor prejdeny") != std::string::npos) {loop_done = true;}
@@ -76,6 +85,16 @@ int main(int argc, char ** argv)
   int err_n = 0;
   bool spurious_ok = true;
 
+  // track: po 20 s sledovania rover zmeni pohyb na priamky 0.5 m/s s nahodnymi zakrutami
+  // kazdych 8 s; detekcie chodia s oneskorenim 0.1 s (cas = cas snimky)
+  Vec3 rpos = rover(0.0);
+  double heading = 0.0, next_turn = 0.0;
+  bool walk = false;
+  std::uniform_real_distribution<double> turn(-1.6, 1.6);
+  std::deque<lrs_control::TargetObs> pending;
+  double se = 0.0, emax = 0.0;
+  int ne = 0, frames = 0, seen = 0;
+
   double search_t = -1.0;
   Vec3 at_search{};
   bool injected = false;
@@ -86,6 +105,30 @@ int main(int argc, char ** argv)
     std::vector<lrs_control::TargetObs> obs;
     const auto st0 = veh.state();
     const int k = static_cast<int>(std::lround(veh.t() / dt));
+    if (sc == "track") {
+      if (!walk && track_t > 0.0 && veh.t() > track_t + 20.0) {
+        walk = true;
+        heading = std::atan2(rpos.y - rc.y, rpos.x - rc.x) + 1.57;
+        next_turn = veh.t() + 8.0;
+      }
+      if (walk) {
+        if (veh.t() >= next_turn) {heading += turn(rng); next_turn += 8.0;}
+        rpos.x += 0.5 * std::cos(heading) * dt;
+        rpos.y += 0.5 * std::sin(heading) * dt;
+      } else {
+        rpos = rover(veh.t());
+      }
+      if (search_t > 0.0 && k % 2 == 0) {
+        const Vec3 rel{rpos.x - st0.pos.x, rpos.y - st0.pos.y, -st0.pos.z};
+        const bool vis = lrs_control::inFootprint(rel, st0.yaw, st0.pos.z, cam);
+        if (track_t > 0.0) {++frames; seen += vis ? 1 : 0;}
+        if (vis) {pending.push_back({veh.t(), {rpos.x + noise(rng), rpos.y + noise(rng), 0.0}});}
+      }
+      while (!pending.empty() && pending.front().t + 0.1 <= veh.t() + 1e-9) {
+        obs.push_back(pending.front());
+        pending.pop_front();
+      }
+    }
     if (sc == "confirm" && search_t > 0.0 && k % 2 == 0) {   // kamera 10 Hz
       const Vec3 r = rover(veh.t());
       const Vec3 rel{r.x - st0.pos.x, r.y - st0.pos.y, r.z - st0.pos.z};
@@ -111,6 +154,16 @@ int main(int argc, char ** argv)
         ++err_n;
       }
       if (veh.t() > track_t + 60.0) {break;}
+    }
+    if (sc == "track" && ex.state() == State::TRACK) {
+      if (track_t < 0.0) {track_t = veh.t();}
+      if (veh.t() > track_t + 5.0) {
+        const double e = lrs_control::distXY(st.pos, rpos);
+        se += e * e;
+        emax = std::max(emax, e);
+        ++ne;
+      }
+      if (veh.t() > track_t + 120.0) {break;}
     }
     if (ex.state() == State::SEARCH && search_t < 0.0) {
       search_t = veh.t();
@@ -151,6 +204,13 @@ int main(int argc, char ** argv)
       "dosah %.1f m, najhorsi roh %.2f m\n", veh.t() - search_t, max_err, max_r, worst);
     ok = ok && loop_done && ex.state() == State::SEARCH && max_err < 1.0 && worst < 0.5 &&
       std::abs(st.pos.z - p.search_alt) < 0.3;
+  } else if (sc == "track") {
+    const double rms = ne > 0 ? std::sqrt(se / ne) : 1e9;
+    const double vis = frames > 0 ? 100.0 * seen / frames : 0.0;
+    std::printf("%s: sledovanie 115 s, odchylka nad roverom RMS %.2f m, max %.2f m, "
+      "rover v zabere %.1f %% snimok\n", naive ? "BEZ filtra" : "alfa-beta", rms, emax, vis);
+    ok = track_t > 0.0 && ex.state() == State::TRACK && vis > 95.0 &&
+      (naive || rms < 0.5) && std::abs(st.pos.z - p.follow_alt) < 0.3;
   } else if (sc == "confirm") {
     const double err = err_n > 0 ? err_sum / err_n : 1e9;
     std::printf("najdeny za %.1f s hladania, falosna detekcia %s, priemerna odchylka nad roverom "

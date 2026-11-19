@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "lrs_control/search_pattern.hpp"
+#include "lrs_control/target_tracker.hpp"
 #include "lrs_control/trajectory.hpp"
 #include "lrs_control/vehicle.hpp"
 
@@ -43,6 +44,14 @@ struct FollowParams
   double search_max_radius{25.0};  // [m] dosah vzoru od stredu
   double cam_hfov_deg{60.0};
   double cam_aspect{0.75};
+
+  // sledovanie
+  double track_alpha{0.5};
+  double track_beta{0.1};
+  double track_gate{3.0};          // [m]
+  double track_lead{0.2};          // [s] mierit tam, kde rover bude o tento cas
+  double track_max_speed{2.0};     // [m/s] strop rychlosti setpointu vodorovne
+  double track_max_vz{1.0};        // [m/s] strop rychlosti setpointu zvisle
   // TODO: dalsie parametre
 };
 
@@ -63,6 +72,10 @@ public:
 
   const std::vector<Vec3> & searchPath() const {return pattern_;}
   int searchPathVersion() const {return pattern_version_;}
+
+  // odhad polohy roveru (platny v TRACK)
+  bool hasEstimate() const {return state_ == State::TRACK && tracker_.initialized();}
+  Vec3 estimate() const {return est_;}
 
 private:
   void onWaitConnection(const VehicleState & st);
@@ -104,6 +117,11 @@ private:
 
   std::deque<double> confirm_t_;  // casy detekcii v okne confirm_window
   TargetObs last_obs_{};
+
+  AlphaBetaTracker tracker_;
+  Vec3 track_sp_{};               // setpoint sledovania (obmedzena rychlost)
+  Vec3 est_{};
+  double track_tick_t_{0.0};
 };
 
 }  // namespace lrs_control

@@ -1,5 +1,7 @@
 #include "lrs_control/follow_executor.hpp"
 
+#include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <utility>
 
@@ -19,6 +21,11 @@ std::string fmt(const char * f, double v)
 FollowExecutor::FollowExecutor(Vehicle & vehicle, FollowParams params, Logger log)
 : vehicle_(vehicle), p_(std::move(params)), log_(std::move(log))
 {
+  TrackerParams tp;
+  tp.alpha = p_.track_alpha;
+  tp.beta = p_.track_beta;
+  tp.gate = p_.track_gate;
+  tracker_ = AlphaBetaTracker(tp);
 }
 
 const char * FollowExecutor::name(State s)
@@ -235,8 +242,6 @@ void FollowExecutor::startLeg(std::size_t i, const Vec3 & from)
 void FollowExecutor::onSearch(
   const VehicleState & st, double now, const std::vector<TargetObs> & obs)
 {
-  (void)st;
-
   // potvrdenie cielu: aspon confirm_count detekcii za poslednych confirm_window s
   for (const auto & o : obs) {
     confirm_t_.push_back(o.t);
@@ -246,6 +251,9 @@ void FollowExecutor::onSearch(
   }
   if (!obs.empty() && static_cast<int>(confirm_t_.size()) >= p_.confirm_count) {
     last_obs_ = obs.back();
+    tracker_.reset(last_obs_.p, last_obs_.t);
+    track_sp_ = st.pos;          // setpoint zacina tam, kde dron je -> ziadny skok
+    track_tick_t_ = now;
     enter(State::TRACK, "ciel potvrdeny (" + std::to_string(confirm_t_.size()) +
       " detekcii), rover x " + fmt("%.1f", last_obs_.p.x) + " y " + fmt("%.1f", last_obs_.p.y));
     return;
@@ -275,15 +283,50 @@ void FollowExecutor::onSearch(
 void FollowExecutor::onTrack(
   const VehicleState & st, double now, const std::vector<TargetObs> & obs)
 {
-  // TODO: alfa-beta filter, predikcia, strata cielu
-  // zatial: nad poslednu detekciu vo vyske follow_alt
+  // TODO: strata cielu -> spat do SEARCH
   (void)st;
-  (void)now;
-  if (!obs.empty()) {
-    last_obs_ = obs.back();
+
+  // 1. detekcie do filtra (podla casu snimky)
+  for (const auto & o : obs) {
+    if (tracker_.update(o.p, o.t)) {
+      last_obs_ = o;
+    }
   }
-  const Vec3 sp{last_obs_.p.x, last_obs_.p.y, launch_.z + p_.follow_alt};
-  vehicle_.sendPositionTarget(sp, launch_yaw_);
+
+  // 2. kam mierit: predikcia o track_lead dopredu, najviac lost_timeout od poslednej detekcie
+  const double t_pred = std::min(now + p_.track_lead, tracker_.lastUpdate() + p_.lost_timeout);
+  est_ = tracker_.predict(now);
+  const Vec3 aim = tracker_.predict(t_pred);
+  const Vec3 goal{aim.x, aim.y, launch_.z + p_.follow_alt};
+
+  // 3. setpoint sa k cielu posuva najviac track_max_speed (bez skokov)
+  const double dt = std::clamp(now - track_tick_t_, 0.0, 0.2);
+  track_tick_t_ = now;
+  const Vec3 prev = track_sp_;
+  const double dx = goal.x - track_sp_.x, dy = goal.y - track_sp_.y;
+  const double dxy = std::hypot(dx, dy), max_xy = p_.track_max_speed * dt;
+  const bool limited = dxy > max_xy;
+  if (limited) {
+    track_sp_.x += dx / dxy * max_xy;
+    track_sp_.y += dy / dxy * max_xy;
+  } else {
+    track_sp_.x = goal.x;
+    track_sp_.y = goal.y;
+  }
+  const double max_z = p_.track_max_vz * dt;
+  track_sp_.z += std::clamp(goal.z - track_sp_.z, -max_z, max_z);
+
+  // 4. feedforward: rychlost roveru, pri dobiehani rychlost setpointu
+  TrajectorySetpoint sp;
+  sp.p = track_sp_;
+  const Vec3 vr = tracker_.velocity();
+  if (limited && dt > 0.0) {
+    sp.v = Vec3{(track_sp_.x - prev.x) / dt, (track_sp_.y - prev.y) / dt, 0.0};
+  } else {
+    sp.v = Vec3{vr.x, vr.y, 0.0};
+  }
+  sp.yaw = launch_yaw_;
+  vehicle_.sendTrajectorySetpoint(sp);
 }
 
 void FollowExecutor::onAbort(const VehicleState & st, double now)

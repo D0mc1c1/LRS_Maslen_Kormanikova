@@ -1,4 +1,4 @@
-// TODO: ~/abort, ~/estimate
+// TODO: ~/abort
 #include <chrono>
 #include <memory>
 #include <mutex>
@@ -6,6 +6,7 @@
 #include <string>
 #include <vector>
 
+#include <geometry_msgs/msg/point_stamped.hpp>
 #include <geometry_msgs/msg/pose_stamped.hpp>
 #include <nav_msgs/msg/path.hpp>
 #include <rclcpp/rclcpp.hpp>
@@ -45,12 +46,24 @@ public:
     p.search_max_radius = declare_parameter("search_max_radius", p.search_max_radius);
     p.cam_hfov_deg = declare_parameter("cam_hfov_deg", p.cam_hfov_deg);
     p.cam_aspect = declare_parameter("cam_aspect", p.cam_aspect);
+    p.track_alpha = declare_parameter("track_alpha", p.track_alpha);
+    p.track_beta = declare_parameter("track_beta", p.track_beta);
+    p.track_gate = declare_parameter("track_gate", p.track_gate);
+    p.track_lead = declare_parameter("track_lead", p.track_lead);
+    p.track_max_speed = declare_parameter("track_max_speed", p.track_max_speed);
+    p.track_max_vz = declare_parameter("track_max_vz", p.track_max_vz);
 
     if (p.search_alt < 2.0 || p.search_alt > 30.0) {
       throw std::runtime_error("search_alt mimo rozsahu 2..30 m");
     }
     if (p.search_speed <= 0.0 || p.search_speed > 5.0) {
       throw std::runtime_error("search_speed mimo rozsahu 0..5 m/s");
+    }
+    if (p.track_alpha <= 0.0 || p.track_alpha > 1.0 || p.track_beta < 0.0 || p.track_beta > 1.0) {
+      throw std::runtime_error("track_alpha musi byt 0..1, track_beta 0..1");
+    }
+    if (p.follow_alt < 2.0 || p.follow_alt > 30.0) {
+      throw std::runtime_error("follow_alt mimo rozsahu 2..30 m");
     }
     if (p.state_timeout < 1.5) {
       throw std::runtime_error("state_timeout < 1.5 s: mavros/state chodi len ~1 Hz");
@@ -65,6 +78,7 @@ public:
         rclcpp::QoS(rclcpp::KeepLast(1)).reliable().transient_local());
     path_pub_ = create_publisher<nav_msgs::msg::Path>("~/search_path",
         rclcpp::QoS(rclcpp::KeepLast(1)).reliable().transient_local());
+    est_pub_ = create_publisher<geometry_msgs::msg::PointStamped>("~/estimate", 10);
 
     // detekcie vlastneho roveru (lokalne ENU drona, frame "map")
     target_group_ = create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
@@ -114,6 +128,16 @@ private:
       m.data = FollowExecutor::name(s);
       state_pub_->publish(m);
     }
+    if (executor_->hasEstimate()) {
+      geometry_msgs::msg::PointStamped e;
+      e.header.stamp = now();
+      e.header.frame_id = "map";
+      const auto v = executor_->estimate();
+      e.point.x = v.x;
+      e.point.y = v.y;
+      e.point.z = v.z;
+      est_pub_->publish(e);
+    }
     if (executor_->searchPathVersion() != path_version_) {
       path_version_ = executor_->searchPathVersion();
       publishSearchPath();
@@ -142,6 +166,7 @@ private:
   std::unique_ptr<FollowExecutor> executor_;
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr state_pub_;
   rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr path_pub_;
+  rclcpp::Publisher<geometry_msgs::msg::PointStamped>::SharedPtr est_pub_;
   int path_version_{0};
   rclcpp::CallbackGroup::SharedPtr target_group_;
   rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr target_sub_;

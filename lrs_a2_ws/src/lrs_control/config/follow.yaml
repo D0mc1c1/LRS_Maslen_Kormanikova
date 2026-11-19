@@ -13,4 +13,9 @@
     search_accel: 0.8
     search_overlap: 0.3
     search_max_radius: 25.0
+    track_alpha: 0.5
+    track_beta: 0.1
+    track_gate: 3.0
+    track_lead: 0.2
+    track_max_speed: 2.0
     # TODO: dalsie parametre
