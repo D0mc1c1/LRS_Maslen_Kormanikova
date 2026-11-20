@@ -51,12 +51,12 @@ void FollowExecutor::tick(double now, const std::vector<TargetObs> & obs)
   if (controlState()) {
     std::string why;
     if (!linkOk(st, p_.state_timeout, p_.pose_timeout, why)) {
-      enter(State::ABORT, "spojenie stratene: " + why);
+      doAbort("spojenie stratene: " + why, false);
     }
   }
   // pilot prevzal riadenie -> nebojovat s nim
   if (airborneState() && (st.mode != "GUIDED" || !st.armed)) {
-    enter(State::ABORT, "mod zmeneny zvonka na '" + st.mode + "'");
+    doAbort("mod zmeneny zvonka na '" + st.mode + "' (pilot prevzal)", false);
   }
 
   switch (state_) {
@@ -72,8 +72,17 @@ void FollowExecutor::tick(double now, const std::vector<TargetObs> & obs)
 
 void FollowExecutor::abort(const std::string & why)
 {
-  // TODO: abort_mode (LOITER / BRAKE / RTL)
-  enter(State::ABORT, why);
+  doAbort(why, true);
+}
+
+void FollowExecutor::doAbort(const std::string & why, bool command)
+{
+  if (state_ == State::ABORT) {
+    return;
+  }
+  command_on_abort_ = command;
+  enter(State::ABORT, why + (command ? " -> " + p_.abort_mode :
+    std::string(" -> prestavam riadit, nic neprikazujem")));
 }
 
 // ---------------------------------------------------------------------------
@@ -90,6 +99,7 @@ void FollowExecutor::enter(State s, const std::string & why)
   state_ = s;
   state_t0_ = now_;
   req_sent_t_ = -1.0;
+  req_attempts_ = 0;
 }
 
 bool FollowExecutor::requestDue() const
@@ -105,6 +115,7 @@ bool FollowExecutor::requestDue() const
 void FollowExecutor::markRequestSent()
 {
   req_sent_t_ = now_;
+  ++req_attempts_;
 }
 
 bool FollowExecutor::controlState() const
@@ -129,7 +140,7 @@ void FollowExecutor::onWaitConnection(const VehicleState & st)
       ", poloha " + (st.has_pose ? "ano" : "nie"));
   }
   if (st.armed) {
-    enter(State::ABORT, "dron je uz armnuty, spusti program s dronom na zemi");
+    doAbort("dron je uz armnuty, spusti program s dronom na zemi", false);
     return;
   }
   if (st.connected && st.has_pose) {
@@ -149,7 +160,7 @@ void FollowExecutor::onSetMode(const VehicleState & st, double now)
     return;
   }
   if (inState() > p_.mode_timeout) {
-    enter(State::ABORT, "GUIDED sa nepodarilo nastavit");
+    doAbort("GUIDED sa nepodarilo nastavit", false);
     return;
   }
   if (requestDue()) {
@@ -170,7 +181,7 @@ void FollowExecutor::onArm(const VehicleState & st, double now)
     return;
   }
   if (inState() > p_.arm_timeout) {
-    enter(State::ABORT, "arm sa nepodaril (prearm checky v konzole SITL)");
+    doAbort("arm sa nepodaril (prearm checky v konzole SITL)", false);
     return;
   }
   if (requestDue()) {
@@ -188,7 +199,7 @@ void FollowExecutor::onTakeoff(const VehicleState & st, double now)
     return;
   }
   if (st.mode != "GUIDED" && inState() > 1.0) {
-    enter(State::ABORT, "pocas vzletu sa mod zmenil na '" + st.mode + "'");
+    doAbort("pocas vzletu sa mod zmenil na '" + st.mode + "' (pilot prevzal)", false);
     return;
   }
   if (!st.armed && inState() > 2.0) {
@@ -196,8 +207,8 @@ void FollowExecutor::onTakeoff(const VehicleState & st, double now)
     return;
   }
   if (inState() > p_.takeoff_timeout) {
-    enter(State::ABORT, "vzlet nedosiahol " + fmt("%.1f m", p_.search_alt) +
-      " (je " + fmt("%.2f m", h) + ")");
+    doAbort("vzlet nedosiahol " + fmt("%.1f m", p_.search_alt) +
+      " (je " + fmt("%.2f m", h) + ")", true);
     return;
   }
   // takeoff sa neposiela znova, ked ho ArduPilot prijal a dron stupa
@@ -343,9 +354,31 @@ void FollowExecutor::onTrack(
 
 void FollowExecutor::onAbort(const VehicleState & st, double now)
 {
-  // TODO
-  (void)st;
   (void)now;
+  // pilot prevzal / spojenie stratene / dron na zemi -> nic neposielame
+  if (!command_on_abort_) {
+    return;
+  }
+  if (!st.armed) {
+    command_on_abort_ = false;
+    log_("ABORT: dron je disarmnuty, nie je co prikazat");
+    return;
+  }
+  // mod potvrdeny -> dalej riadi ArduPilot, dalsie zmeny modu su uz pilotove
+  if (st.mode == p_.abort_mode) {
+    command_on_abort_ = false;
+    log_("ABORT: mod " + p_.abort_mode + " potvrdeny, dalej riadi ArduPilot");
+    return;
+  }
+  if (requestDue()) {
+    if (req_attempts_ >= 5) {
+      command_on_abort_ = false;
+      log_("ABORT: " + p_.abort_mode + " sa nepodarilo nastavit, riadi pilot");
+      return;
+    }
+    vehicle_.requestMode(p_.abort_mode);
+    markRequestSent();
+  }
 }
 
 }  // namespace lrs_control

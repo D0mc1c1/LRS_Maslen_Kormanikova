@@ -26,7 +26,7 @@ struct FollowParams
   double lost_timeout{1.5};
   int confirm_count{3};
   double confirm_window{1.0};
-  std::string abort_mode{"LOITER"};
+  std::string abort_mode{"LOITER"};  // LOITER / BRAKE / RTL, nikdy LAND
 
   // vzlet (rovnako ako A1)
   double takeoff_tol{0.3};       // [m] vzlet hotovy pri vyske >= search_alt - takeoff_tol
@@ -89,6 +89,10 @@ private:
   void startSearch(const VehicleState & st, const std::string & why);
   void startLeg(std::size_t i, const Vec3 & from);
 
+  // command = true: prikazat abort_mode (dron je vo vzduchu a riadime ho my)
+  // command = false: len prestat riadit (pilot prevzal, spojenie stratene, dron na zemi)
+  void doAbort(const std::string & why, bool command);
+
   void enter(State s, const std::string & why);
   double inState() const {return now_ - state_t0_;}
   bool requestDue() const;
@@ -104,6 +108,8 @@ private:
   double now_{0.0};
   double state_t0_{0.0};
   double req_sent_t_{-1.0};     // -1 = v tomto stave este nic neposlane
+  int req_attempts_{0};         // pocet poziadaviek v tomto stave
+  bool command_on_abort_{false};
   Vec3 launch_{};               // miesto vzletu (lokalne ENU drona)
   double launch_yaw_{0.0};
   Vec3 hover_{};                // nad miestom vzletu vo vyske search_alt

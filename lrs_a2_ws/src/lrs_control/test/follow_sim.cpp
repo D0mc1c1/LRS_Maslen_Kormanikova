@@ -1,5 +1,5 @@
 // Offline test FollowExecutor bez ROS a bez simulatora.
-// usage: follow_sim [takeoff|search|confirm|track [naive]|lost|rc|linkloss]
+// usage: follow_sim [takeoff|search|confirm|track [naive]|lost|abort [LOITER|BRAKE|RTL]|rc|linkloss]
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -43,9 +43,10 @@ int main(int argc, char ** argv)
 {
   const std::string sc = argc > 1 ? argv[1] : "takeoff";
   if (sc != "takeoff" && sc != "search" && sc != "confirm" && sc != "track" && sc != "lost" &&
-    sc != "rc" && sc != "linkloss")
+    sc != "abort" && sc != "rc" && sc != "linkloss")
   {
-    std::printf("usage: follow_sim [takeoff|search|confirm|track [naive]|lost|rc|linkloss]\n");
+    std::printf("usage: follow_sim [takeoff|search|confirm|track [naive]|lost|"
+      "abort [LOITER|BRAKE|RTL]|rc|linkloss]\n");
     return 1;
   }
 
@@ -56,6 +57,9 @@ int main(int argc, char ** argv)
     p.track_alpha = 1.0;
     p.track_beta = 0.0;
     p.track_lead = 0.0;
+  }
+  if (sc == "abort" && argc > 2) {
+    p.abort_mode = argv[2];
   }
   bool loop_done = false;
   FollowExecutor ex(veh, p, [&](const std::string & m) {
@@ -101,6 +105,9 @@ int main(int argc, char ** argv)
              ((t >= track_t + 30.0 && t < track_t + 36.0) || (t >= track_t + 70.0 && t < track_t + 76.0));
     };
   State prev = State::WAIT_CONNECTION;
+  double abort_t = -1.0, mode_ok_t = -1.0;
+  Vec3 abort_pos{};
+  long sp_after = -1;
   double lost_at = -1.0;
   std::vector<double> lost_delay, refind_time;   // od skrytia po stratu, od straty po najdenie
 
@@ -140,7 +147,7 @@ int main(int argc, char ** argv)
         pending.pop_front();
       }
     }
-    if (sc == "confirm" && search_t > 0.0 && k % 2 == 0) {   // kamera 10 Hz
+    if ((sc == "confirm" || sc == "abort") && search_t > 0.0 && k % 2 == 0) {   // kamera 10 Hz
       const Vec3 r = rover(veh.t());
       const Vec3 rel{r.x - st0.pos.x, r.y - st0.pos.y, r.z - st0.pos.z};
       if (lrs_control::inFootprint(rel, st0.yaw, st0.pos.z, cam)) {
@@ -175,6 +182,18 @@ int main(int argc, char ** argv)
         ++ne;
       }
       if (veh.t() > track_t + 120.0) {break;}
+    }
+    // abort: 10 s po najdeni ako cez sluzbu ~/abort, potom 20 s pozorovat
+    if (sc == "abort") {
+      if (ex.state() == State::TRACK && track_t < 0.0) {track_t = veh.t();}
+      if (track_t > 0.0 && abort_t < 0.0 && veh.t() > track_t + 10.0) {
+        abort_t = veh.t();
+        abort_pos = st.pos;
+        ex.abort("abort cez sluzbu ~/abort (test)");
+      }
+      if (abort_t > 0.0 && mode_ok_t < 0.0 && st.mode == p.abort_mode) {mode_ok_t = veh.t();}
+      if (abort_t > 0.0 && veh.t() > abort_t + 1.0 && sp_after < 0) {sp_after = veh.setpoints();}
+      if (abort_t > 0.0 && veh.t() > abort_t + 20.0) {break;}
     }
     if (sc == "lost") {
       if (ex.state() == State::TRACK && track_t < 0.0) {track_t = veh.t();}
@@ -211,7 +230,7 @@ int main(int argc, char ** argv)
       if (sc == "rc") {veh.forceMode("LOITER");}
       if (sc == "linkloss") {veh.dropLink();}
     }
-    if (ex.state() == State::ABORT) {break;}
+    if (ex.state() == State::ABORT && sc != "abort") {break;}
   }
 
   const auto st = veh.state();
@@ -235,6 +254,14 @@ int main(int argc, char ** argv)
       "rover v zabere %.1f %% snimok\n", naive ? "BEZ filtra" : "alfa-beta", rms, emax, vis);
     ok = track_t > 0.0 && ex.state() == State::TRACK && vis > 95.0 &&
       (naive || rms < 0.5) && std::abs(st.pos.z - p.follow_alt) < 0.3;
+  } else if (sc == "abort") {
+    const bool no_sp = sp_after >= 0 && veh.setpoints() == sp_after;
+    const double moved = lrs_control::distXY(st.pos, abort_pos);
+    std::printf("abort -> %s: mod potvrdeny po %.2f s, setpointy po aborte %s, LAND poziadavky %d, "
+      "posun za 20 s %.2f m\n", p.abort_mode.c_str(), mode_ok_t - abort_t,
+      no_sp ? "ziadne" : "STALE CHODIA", veh.landRequests(), moved);
+    ok = ex.state() == State::ABORT && mode_ok_t > 0.0 && mode_ok_t - abort_t < 2.0 && no_sp &&
+      veh.landRequests() == 0 && (p.abort_mode == "RTL" || moved < 0.5);
   } else if (sc == "lost") {
     double worst = 0.0;
     for (std::size_t i = 0; i < lost_delay.size(); ++i) {

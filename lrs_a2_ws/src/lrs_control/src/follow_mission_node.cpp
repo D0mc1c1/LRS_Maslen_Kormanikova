@@ -1,4 +1,3 @@
-// TODO: ~/abort
 #include <chrono>
 #include <memory>
 #include <mutex>
@@ -10,7 +9,9 @@
 #include <geometry_msgs/msg/pose_stamped.hpp>
 #include <nav_msgs/msg/path.hpp>
 #include <rclcpp/rclcpp.hpp>
+#include <rclcpp/version.h>
 #include <std_msgs/msg/string.hpp>
+#include <std_srvs/srv/trigger.hpp>
 
 #include "lrs_control/follow_executor.hpp"
 #include "lrs_control/mavros_vehicle.hpp"
@@ -65,6 +66,9 @@ public:
     if (p.follow_alt < 2.0 || p.follow_alt > 30.0) {
       throw std::runtime_error("follow_alt mimo rozsahu 2..30 m");
     }
+    if (p.abort_mode != "LOITER" && p.abort_mode != "BRAKE" && p.abort_mode != "RTL") {
+      throw std::runtime_error("abort_mode musi byt LOITER, BRAKE alebo RTL (LAND nie)");
+    }
     if (p.state_timeout < 1.5) {
       throw std::runtime_error("state_timeout < 1.5 s: mavros/state chodi len ~1 Hz");
     }
@@ -91,6 +95,24 @@ public:
     control_group_ = create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
     control_timer_ = create_wall_timer(
       std::chrono::duration<double>(1.0 / rate), [this]() {controlTick();}, control_group_);
+
+    // ~/abort v tej istej skupine ako timer -> nikdy nebezi naraz s tick()
+    abort_mode_ = p.abort_mode;
+    abort_srv_ = create_service<std_srvs::srv::Trigger>(
+      "~/abort",
+      [this](const std::shared_ptr<std_srvs::srv::Trigger::Request>,
+      std::shared_ptr<std_srvs::srv::Trigger::Response> res) {
+        executor_->abort("abort cez sluzbu ~/abort");
+        res->success = true;
+        res->message = std::string("ABORT -> ") + abort_mode_ + ", stav " +
+        FollowExecutor::name(executor_->state());
+      },
+#if RCLCPP_VERSION_MAJOR >= 28
+      rclcpp::ServicesQoS(),
+#else
+      rmw_qos_profile_services_default,
+#endif
+      control_group_);
 
     RCLCPP_INFO(get_logger(), "follow_mission: namespace '%s', sysid %d, vyska hladania %.1f m",
       get_namespace(), p.sysid, p.search_alt);
@@ -174,6 +196,8 @@ private:
   std::vector<lrs_control::TargetObs> obs_buf_;
   rclcpp::CallbackGroup::SharedPtr control_group_;
   rclcpp::TimerBase::SharedPtr control_timer_;
+  rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr abort_srv_;
+  std::string abort_mode_;
   FollowExecutor::State last_state_{FollowExecutor::State::ABORT};
 };
 
