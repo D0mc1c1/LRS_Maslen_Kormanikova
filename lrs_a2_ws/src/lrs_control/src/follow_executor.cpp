@@ -254,8 +254,12 @@ void FollowExecutor::onSearch(
     tracker_.reset(last_obs_.p, last_obs_.t);
     track_sp_ = st.pos;          // setpoint zacina tam, kde dron je -> ziadny skok
     track_tick_t_ = now;
-    enter(State::TRACK, "ciel potvrdeny (" + std::to_string(confirm_t_.size()) +
-      " detekcii), rover x " + fmt("%.1f", last_obs_.p.x) + " y " + fmt("%.1f", last_obs_.p.y));
+    std::string why = "ciel potvrdeny (" + std::to_string(confirm_t_.size()) +
+      " detekcii), rover x " + fmt("%.1f", last_obs_.p.x) + " y " + fmt("%.1f", last_obs_.p.y);
+    if (lost_t_ >= 0.0) {
+      why += ", znova najdeny po " + fmt("%.1f s", now - lost_t_);
+    }
+    enter(State::TRACK, why);
     return;
   }
 
@@ -283,14 +287,22 @@ void FollowExecutor::onSearch(
 void FollowExecutor::onTrack(
   const VehicleState & st, double now, const std::vector<TargetObs> & obs)
 {
-  // TODO: strata cielu -> spat do SEARCH
-  (void)st;
-
   // 1. detekcie do filtra (podla casu snimky)
   for (const auto & o : obs) {
     if (tracker_.update(o.p, o.t)) {
       last_obs_ = o;
     }
+  }
+
+  // strata cielu: dlhsie ako lost_timeout bez pouzitej detekcie -> nove hladanie od aktualnej
+  // polohy, vo vyske hladania (vacsi zaber kamery)
+  const double since = now - tracker_.lastUpdate();
+  if (since > p_.lost_timeout) {
+    ++lost_count_;
+    lost_t_ = now;
+    startSearch(st, "ciel strateny " + std::to_string(lost_count_) + ". krat (" +
+      fmt("%.1f s", since) + " bez detekcie), hladam od aktualnej polohy");
+    return;
   }
 
   // 2. kam mierit: predikcia o track_lead dopredu, najviac lost_timeout od poslednej detekcie

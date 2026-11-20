@@ -2,6 +2,7 @@
 // target/pose sa publikuje len vtedy, ked je rover v zabere kamery (ako skutocny detektor).
 // Stred kruznice = poloha drona pri starte + (offset_x, offset_y).
 // Po walk_after s prejde na priamky (walk_speed) s nahodnou zakrutou kazdych turn_every s.
+// hide_every > 0: kazdych hide_every s sa rover na hide_for s skryje (ziadne detekcie).
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -35,6 +36,8 @@ public:
     walk_after_ = declare_parameter("walk_after", 60.0);  // [s] od startu, < 0 = len kruznica
     walk_speed_ = declare_parameter("walk_speed", 0.5);   // [m/s]
     turn_every_ = declare_parameter("turn_every", 8.0);   // [s]
+    hide_every_ = declare_parameter("hide_every", -1.0);  // [s] < 0 = nikdy
+    hide_for_ = declare_parameter("hide_for", 5.0);       // [s]
     const double rate = declare_parameter("rate", 10.0);  // [Hz] ako kamera
     cam_.cam_hfov_deg = declare_parameter("cam_hfov_deg", 60.0);
     cam_.cam_aspect = declare_parameter("cam_aspect", 0.75);
@@ -100,6 +103,17 @@ private:
     m.pose.orientation.w = 1.0;
     truth_pub_->publish(m);
 
+    // skryty rover (napr. pod stromom): ziadna detekcia
+    const bool hidden = hide_every_ > 0.0 && t >= hide_every_ &&
+      std::fmod(t, hide_every_) < hide_for_;
+    if (hidden != was_hidden_) {
+      was_hidden_ = hidden;
+      RCLCPP_INFO(get_logger(), "fake_target: rover %s", hidden ? "SKRYTY" : "znova viditelny");
+    }
+    if (hidden) {
+      return;
+    }
+
     // detekcia len v zabere kamery
     const lrs_control::Vec3 rel{rover.x - dp.x, rover.y - dp.y, rover.z - dp.z};
     cam_.altitude = dp.z - ground_z_;
@@ -112,6 +126,8 @@ private:
   }
 
   double offset_x_, offset_y_, radius_, speed_, noise_, walk_after_, walk_speed_, turn_every_;
+  double hide_every_, hide_for_;
+  bool was_hidden_{false};
   lrs_control::SearchPatternParams cam_;
   rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr pose_sub_;
   rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr target_pub_, truth_pub_;

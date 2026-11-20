@@ -1,6 +1,5 @@
 // Offline test FollowExecutor bez ROS a bez simulatora.
-// usage: follow_sim [takeoff|search|confirm|track [naive]|rc|linkloss]
-// TODO: strata a opatovne najdenie
+// usage: follow_sim [takeoff|search|confirm|track [naive]|lost|rc|linkloss]
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -43,10 +42,10 @@ static bool checkPattern(const lrs_control::FollowParams & p)
 int main(int argc, char ** argv)
 {
   const std::string sc = argc > 1 ? argv[1] : "takeoff";
-  if (sc != "takeoff" && sc != "search" && sc != "confirm" && sc != "track" && sc != "rc" &&
-    sc != "linkloss")
+  if (sc != "takeoff" && sc != "search" && sc != "confirm" && sc != "track" && sc != "lost" &&
+    sc != "rc" && sc != "linkloss")
   {
-    std::printf("usage: follow_sim [takeoff|search|confirm|track [naive]|rc|linkloss]\n");
+    std::printf("usage: follow_sim [takeoff|search|confirm|track [naive]|lost|rc|linkloss]\n");
     return 1;
   }
 
@@ -94,6 +93,16 @@ int main(int argc, char ** argv)
   std::deque<lrs_control::TargetObs> pending;
   double se = 0.0, emax = 0.0;
   int ne = 0, frames = 0, seen = 0;
+  const bool moving = sc == "track" || sc == "lost";
+
+  // lost: rover sa 2x na 6 s skryje (30 a 70 s po prvom najdeni)
+  auto hidden = [&](double t) {
+      return sc == "lost" && track_t > 0.0 &&
+             ((t >= track_t + 30.0 && t < track_t + 36.0) || (t >= track_t + 70.0 && t < track_t + 76.0));
+    };
+  State prev = State::WAIT_CONNECTION;
+  double lost_at = -1.0;
+  std::vector<double> lost_delay, refind_time;   // od skrytia po stratu, od straty po najdenie
 
   double search_t = -1.0;
   Vec3 at_search{};
@@ -105,7 +114,7 @@ int main(int argc, char ** argv)
     std::vector<lrs_control::TargetObs> obs;
     const auto st0 = veh.state();
     const int k = static_cast<int>(std::lround(veh.t() / dt));
-    if (sc == "track") {
+    if (moving) {
       if (!walk && track_t > 0.0 && veh.t() > track_t + 20.0) {
         walk = true;
         heading = std::atan2(rpos.y - rc.y, rpos.x - rc.x) + 1.57;
@@ -122,7 +131,9 @@ int main(int argc, char ** argv)
         const Vec3 rel{rpos.x - st0.pos.x, rpos.y - st0.pos.y, -st0.pos.z};
         const bool vis = lrs_control::inFootprint(rel, st0.yaw, st0.pos.z, cam);
         if (track_t > 0.0) {++frames; seen += vis ? 1 : 0;}
-        if (vis) {pending.push_back({veh.t(), {rpos.x + noise(rng), rpos.y + noise(rng), 0.0}});}
+        if (vis && !hidden(veh.t())) {
+          pending.push_back({veh.t(), {rpos.x + noise(rng), rpos.y + noise(rng), 0.0}});
+        }
       }
       while (!pending.empty() && pending.front().t + 0.1 <= veh.t() + 1e-9) {
         obs.push_back(pending.front());
@@ -165,6 +176,19 @@ int main(int argc, char ** argv)
       }
       if (veh.t() > track_t + 120.0) {break;}
     }
+    if (sc == "lost") {
+      if (ex.state() == State::TRACK && track_t < 0.0) {track_t = veh.t();}
+      if (prev == State::TRACK && ex.state() == State::SEARCH) {
+        lost_at = veh.t();
+        const double hide0 = veh.t() < track_t + 50.0 ? track_t + 30.0 : track_t + 70.0;
+        lost_delay.push_back(veh.t() - hide0);
+      }
+      if (prev == State::SEARCH && ex.state() == State::TRACK && lost_at > 0.0) {
+        refind_time.push_back(veh.t() - lost_at);
+      }
+      if (track_t > 0.0 && veh.t() > track_t + 110.0) {break;}
+    }
+    prev = ex.state();
     if (ex.state() == State::SEARCH && search_t < 0.0) {
       search_t = veh.t();
       at_search = st.pos;
@@ -211,6 +235,16 @@ int main(int argc, char ** argv)
       "rover v zabere %.1f %% snimok\n", naive ? "BEZ filtra" : "alfa-beta", rms, emax, vis);
     ok = track_t > 0.0 && ex.state() == State::TRACK && vis > 95.0 &&
       (naive || rms < 0.5) && std::abs(st.pos.z - p.follow_alt) < 0.3;
+  } else if (sc == "lost") {
+    double worst = 0.0;
+    for (std::size_t i = 0; i < lost_delay.size(); ++i) {
+      const double rf = i < refind_time.size() ? refind_time[i] : -1.0;
+      std::printf("strata %zu: rozpoznana %.1f s po skryti, znova najdeny %.1f s po strate\n",
+        i + 1, lost_delay[i], rf);
+      worst = std::max(worst, rf < 0.0 ? 1e9 : rf);
+    }
+    ok = lost_delay.size() == 2 && refind_time.size() == 2 && worst < 15.0 &&
+      ex.state() == State::TRACK && std::abs(st.pos.z - p.follow_alt) < 0.3;
   } else if (sc == "confirm") {
     const double err = err_n > 0 ? err_sum / err_n : 1e9;
     std::printf("najdeny za %.1f s hladania, falosna detekcia %s, priemerna odchylka nad roverom "

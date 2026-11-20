@@ -122,6 +122,8 @@ private:
   Vec3 track_sp_{};               // setpoint sledovania (obmedzena rychlost)
   Vec3 est_{};
   double track_tick_t_{0.0};
+  double lost_t_{-1.0};           // kedy sa ciel naposledy stratil (-1 = este nie)
+  int lost_count_{0};
 };
 
 }  // namespace lrs_control
