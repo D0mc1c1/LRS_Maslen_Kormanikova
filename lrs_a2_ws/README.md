@@ -26,3 +26,31 @@ cd lrs_a2_ws
 colcon build --symlink-install
 source install/setup.bash
 ```
+
+## Bring-up dvoch dronov (§1)
+
+Každý krok vo vlastnom termináli, v poradí:
+
+```bash
+# 1. Gazebo (z koreňa repozitára LRS-URK)
+scripts/run_gazebo.sh fei_lrs_precision_landing.world
+
+# 2. Dva SITL v tmux (ArduCopter sa zbuilduje raz, potom oba s --no-rebuild)
+ros2 run lrs_bringup sitl_2x.sh          # --no-build, ak je už zbuildovaný
+tmux attach -t sitl2x                     # Ctrl+b n = ďalší dron, Ctrl+b d = odpojiť
+
+# 3. 2x MAVROS (/drone_1/mavros, /drone_2/mavros) + bridge kamier
+ros2 launch lrs_bringup bringup.launch.py
+
+# 4. Kontrola §1: každá téma má publishera, MAVROS connected, fx z camera_info, Hz obrazu
+ros2 run lrs_bringup check_bringup.sh
+```
+
+| | drone_1 | drone_2 |
+|---|---|---|
+| SITL | `--instance 0 --sysid 1` | `--instance 1 --sysid 2` |
+| MAVLink → MAVROS | UDP 14550 | UDP 14560 |
+| MAVROS namespace | `/drone_1/mavros` | `/drone_2/mavros` |
+| kamera | `/drone_1/down_camera/{image_raw,camera_info}` | `/drone_2/down_camera/{image_raw,camera_info}` |
+
+Záznam: `ros2 run lrs_bringup record.sh [meno]` (obraz len s `IMAGES=1`).
