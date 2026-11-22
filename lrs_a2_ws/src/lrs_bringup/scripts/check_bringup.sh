@@ -45,11 +45,16 @@ for n in "${drones[@]}"; do
     fi
   done
 
-  conn="$(field "$ns/mavros/state" connected)"
-  if [[ "$conn" == *true* ]]; then
-    pass "MAVROS pripojeny k SITL"
+  # ROS vypisuje "True"; po "ros2 daemon stop" trva hladanie temy dlhsie, preto 2 pokusy
+  conn=""
+  for _ in 1 2; do
+    conn="$(field "$ns/mavros/state" connected 15 | grep -i -m1 -E '^(true|false)$')"
+    [[ -n "$conn" ]] && break
+  done
+  if [[ "${conn,,}" == "true" ]]; then
+    pass "MAVROS pripojeny k SITL (connected: $conn)"
   else
-    fail "MAVROS nie je pripojeny (connected: ${conn:-ziadna sprava})"
+    fail "MAVROS nie je pripojeny (connected: ${conn:-ziadna sprava do 30 s})"
   fi
 
   k="$(field "$ns/down_camera/camera_info" k)"
@@ -61,7 +66,7 @@ for n in "${drones[@]}"; do
     fail "camera_info neprislo (over nazov: gz topic -l | grep down_camera)"
   fi
 
-  hz="$(timeout 6 ros2 topic hz "$ns/down_camera/image_raw" 2>/dev/null |
+  hz="$(timeout 12 ros2 topic hz "$ns/down_camera/image_raw" 2>/dev/null |
     awk '/average rate/ {r=$3} END {print r}')"
   if [[ -n "$hz" ]]; then
     pass "image_raw ${hz} Hz"

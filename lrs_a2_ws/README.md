@@ -39,7 +39,7 @@ scripts/run_gazebo.sh fei_lrs_precision_landing.world
 ros2 run lrs_bringup sitl_2x.sh          # --no-build, ak je už zbuildovaný
 tmux attach -t sitl2x                     # Ctrl+b n = ďalší dron, Ctrl+b d = odpojiť
 
-# 3. 2x MAVROS (/drone_1/mavros, /drone_2/mavros) + bridge kamier
+# 3. 2x MAVROS (témy /drone_N/mavros/...) + bridge kamier
 ros2 launch lrs_bringup bringup.launch.py
 
 # 4. Kontrola §1: každá téma má publishera, MAVROS connected, fx z camera_info, Hz obrazu
@@ -50,7 +50,8 @@ ros2 run lrs_bringup check_bringup.sh
 |---|---|---|
 | SITL | `--instance 0 --sysid 1` | `--instance 1 --sysid 2` |
 | MAVLink → MAVROS | UDP 14550 | UDP 14560 |
-| MAVROS namespace | `/drone_1/mavros` | `/drone_2/mavros` |
+| MAVROS uzol (namespace) | `drone_1` | `drone_2` |
+| MAVROS témy | `/drone_1/mavros/...` | `/drone_2/mavros/...` |
 | kamera | `/drone_1/down_camera/{image_raw,camera_info}` | `/drone_2/down_camera/{image_raw,camera_info}` |
 
 Záznam: `ros2 run lrs_bringup record.sh [meno]` (obraz len s `IMAGES=1`).

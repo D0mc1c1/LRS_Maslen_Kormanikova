@@ -6,8 +6,9 @@
 #   ros2 launch lrs_bringup bringup.launch.py
 #   ros2 launch lrs_bringup bringup.launch.py bridge:=false   # len MAVROS
 #
-# MAVROS bezi v namespace /drone_N/mavros, takze temy su /drone_N/mavros/state atd.
-# S namespace /drone_N by boli /drone_N/state a follow_mission by nic nevidel (plan, 7.2).
+# MAVROS bezi v namespace /drone_N a sam si prida uzol "mavros", takze temy su
+# /drone_N/mavros/state atd. (tak ich cita follow_mission). S namespace drone_N/mavros
+# by boli /drone_N/mavros/mavros/state (overene v Gazebe, MAVROS 2026).
 import os
 
 from ament_index_python.packages import get_package_share_directory
@@ -37,7 +38,7 @@ def generate_launch_description():
         actions.append(Node(
             package='mavros',
             executable='mavros_node',
-            namespace=f'drone_{n}/mavros',
+            namespace=f'drone_{n}',
             output='screen',
             parameters=[{
                 'fcu_url': f"udp://0.0.0.0:{d['port']}@",
