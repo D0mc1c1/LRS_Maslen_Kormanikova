@@ -55,3 +55,22 @@ ros2 run lrs_bringup check_bringup.sh
 | kamera | `/drone_1/down_camera/{image_raw,camera_info}` | `/drone_2/down_camera/{image_raw,camera_info}` |
 
 Záznam: `ros2 run lrs_bringup record.sh [meno]` (obraz len s `IMAGES=1`).
+
+## Misia find-and-follow (§2–§4)
+
+Po bring-upe (`check_bringup.sh` = PASS), keď drony stoja na zemi:
+
+```bash
+ros2 launch lrs_bringup follow.launch.py                         # oba drony, detektor
+ros2 launch lrs_bringup follow.launch.py drones:=1               # len drone_1
+ros2 launch lrs_bringup follow.launch.py drones:=1 fake:=true    # fake_target namiesto detektora
+ros2 launch lrs_bringup follow.launch.py slow:=true              # pomalá simulácia (dlhšie timeouty)
+
+ros2 topic echo /drone_1/target/pose                             # detekcie vlastného roveru
+ros2 service call /drone_1/follow_mission/abort std_srvs/srv/Trigger
+```
+
+Detektor `aruco_detector` (balík `lrs_vision`, parametre v `config/vision.yaml`):
+publikuje `target/pose` len pre značku s `id == marker_id == N`, cudziu značku loguje
+(„ignorujem cudziu znacku id …"), pri značke pod dronom loguje „NAD ROVEROM" (overenie §3)
+a každých 10 s štatistiku snímok a času spracovania.
