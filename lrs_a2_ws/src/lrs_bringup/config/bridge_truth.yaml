@@ -1,0 +1,16 @@
+# LEN NA LADENIE (§3): skutocna poloha roverov z Gazeba (OdometryPublisher, ramec "world").
+# Zadanie dovoluje tieto temy pouzit na overenie, NIE pre riadenie. Ziadny uzol misie
+# (follow_mission, aruco_detector) ich neodobera, cita ich len verify_pose.py.
+# Spusta sa cez: ros2 launch lrs_bringup bringup.launch.py truth:=true
+
+- ros_topic_name: "/model/aruco_rover_1/odometry"
+  gz_topic_name: "/model/aruco_rover_1/odometry"
+  ros_type_name: "nav_msgs/msg/Odometry"
+  gz_type_name: "gz.msgs.Odometry"
+  direction: GZ_TO_ROS
+
+- ros_topic_name: "/model/aruco_rover_2/odometry"
+  gz_topic_name: "/model/aruco_rover_2/odometry"
+  ros_type_name: "nav_msgs/msg/Odometry"
+  gz_type_name: "gz.msgs.Odometry"
+  direction: GZ_TO_ROS

@@ -74,3 +74,20 @@ Detektor `aruco_detector` (balík `lrs_vision`, parametre v `config/vision.yaml`
 publikuje `target/pose` len pre značku s `id == marker_id == N`, cudziu značku loguje
 („ignorujem cudziu znacku id …"), pri značke pod dronom loguje „NAD ROVEROM" (overenie §3)
 a každých 10 s štatistiku snímok a času spracovania.
+
+## Overenie polohy značky v Gazebe (§3)
+
+Odhad detektora (`/drone_N/target/pose`) sa porovná so skutočnou polohou roveru z Gazeba
+(`/model/aruco_rover_N/odometry`). Skutočná poloha ide cez samostatný bridge, ktorý sa
+spúšťa len na overenie; misia (`follow_mission`, `aruco_detector`) ju nepoužíva.
+
+```bash
+ros2 launch lrs_bringup bringup.launch.py truth:=true           # namiesto bežného bring-upu
+ros2 launch lrs_bringup follow.launch.py drones:=1 slow:=true    # dron nájde a sleduje rover
+ros2 run lrs_bringup verify_pose.py 1 --csv ~/verify_d1.csv      # Ctrl+C = súhrn
+```
+
+Prevod Gazebo → lokálny rámec drona: `x_lok = -y_gz`, `y_lok = x_gz` (ArduPilot berie os x
+Gazeba ako sever). Skript ho na štarte overí z polohy drona na zemi. Súhrn: chyba polohy
+(§3 splnený, keď medián < 0,638 m), stály posun (montáž kamery / rámec) a pomer vzdialeností
+odhad/skutočnosť (veľkosť značky a intrinziky).

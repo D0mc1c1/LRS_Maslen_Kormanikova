@@ -5,6 +5,7 @@
 #
 #   ros2 launch lrs_bringup bringup.launch.py
 #   ros2 launch lrs_bringup bringup.launch.py bridge:=false   # len MAVROS
+#   ros2 launch lrs_bringup bringup.launch.py truth:=true     # + skutocne polohy roverov (len overenie §3)
 #
 # MAVROS bezi v namespace /drone_N a sam si prida uzol "mavros", takze temy su
 # /drone_N/mavros/state atd. (tak ich cita follow_mission). S namespace drone_N/mavros
@@ -26,13 +27,18 @@ DRONES = [
 
 
 def generate_launch_description():
-    bridge_cfg = os.path.join(
-        get_package_share_directory('lrs_bringup'), 'config', 'bridge.yaml')
+    share = get_package_share_directory('lrs_bringup')
+    bridge_cfg = os.path.join(share, 'config', 'bridge.yaml')
+    truth_cfg = os.path.join(share, 'config', 'bridge_truth.yaml')
 
     bridge_arg = DeclareLaunchArgument(
         'bridge', default_value='true', description='spustit ros_gz_bridge kamier')
 
-    actions = [bridge_arg]
+    truth_arg = DeclareLaunchArgument(
+        'truth', default_value='false',
+        description='bridge skutocnej polohy roverov z Gazeba, LEN na overenie (verify_pose.py)')
+
+    actions = [bridge_arg, truth_arg]
     for d in DRONES:
         n = d['n']
         actions.append(Node(
@@ -54,5 +60,14 @@ def generate_launch_description():
         output='screen',
         parameters=[{'config_file': bridge_cfg}],
         condition=IfCondition(LaunchConfiguration('bridge')),
+    ))
+    # samostatny bridge, aby bolo jasne, ze misia skutocnu polohu nepouziva
+    actions.append(Node(
+        package='ros_gz_bridge',
+        executable='parameter_bridge',
+        name='truth_bridge',
+        output='screen',
+        parameters=[{'config_file': truth_cfg}],
+        condition=IfCondition(LaunchConfiguration('truth')),
     ))
     return LaunchDescription(actions)
