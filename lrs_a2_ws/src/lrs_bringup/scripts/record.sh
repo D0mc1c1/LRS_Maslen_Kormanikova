@@ -30,6 +30,8 @@ for n in 1 2; do
     topics+=("$ns/down_camera/image_raw")
   fi
 done
+# skutocna poloha roverov (len ak bezi bringup truth:=true), na porovnanie po teste, nie riadenie
+topics+=(/model/aruco_rover_1/odometry /model/aruco_rover_2/odometry)
 # logy uzlov ("ignorujem cudziu znacku", "NAD ROVEROM", prechody stavov) ako dokaz
 topics+=(/rosout)
 

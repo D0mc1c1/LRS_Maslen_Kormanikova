@@ -66,6 +66,17 @@ for n in "${drones[@]}"; do
     fail "camera_info neprislo (over nazov: gz topic -l | grep down_camera)"
   fi
 
+  # poloha z MAVROS: pod ~3 Hz ma follow_mission aj detektor zastaranu polohu
+  phz="$(timeout 12 ros2 topic hz "$ns/mavros/local_position/pose" 2>/dev/null |
+    awk '/average rate/ {r=$3} END {print r}')"
+  if [[ -z "$phz" ]]; then
+    fail "mavros/local_position/pose nechodi"
+  elif awk -v r="$phz" 'BEGIN {exit !(r >= 3.0)}'; then
+    pass "poloha z MAVROS ${phz} Hz"
+  else
+    fail "poloha z MAVROS len ${phz} Hz (treba >= 3): sitl_2x.sh so SITL_STREAMRATE=20, pomala simulacia?"
+  fi
+
   hz="$(timeout 12 ros2 topic hz "$ns/down_camera/image_raw" 2>/dev/null |
     awk '/average rate/ {r=$3} END {print r}')"
   if [[ -n "$hz" ]]; then

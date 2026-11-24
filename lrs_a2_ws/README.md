@@ -91,3 +91,19 @@ Prevod Gazebo → lokálny rámec drona: `x_lok = -y_gz`, `y_lok = x_gz` (ArduPi
 Gazeba ako sever). Skript ho na štarte overí z polohy drona na zemi. Súhrn: chyba polohy
 (§3 splnený, keď medián < 0,638 m), stály posun (montáž kamery / rámec) a pomer vzdialeností
 odhad/skutočnosť (veľkosť značky a intrinziky).
+
+## Test sledovania s náhodným pohybom roverov (§4)
+
+Po bring-upe (drony na zemi) jeden príkaz pre každý seed: rosbag, `randomize_rovers.py --seed N`,
+misia na `--duration` s, potom pristátie oboch dronov a vyhodnotenie z logu.
+
+```bash
+ros2 run lrs_bringup run_follow_test.sh --slow --debug 42           # jeden seed, 300 s
+ros2 run lrs_bringup run_follow_test.sh --slow 42 7 123             # viac seedov za sebou
+ros2 run lrs_bringup analyze_follow_log.py ~/lrs_tests/seed42_*/follow.log   # znova vyhodnotiť
+ros2 run rqt_image_view rqt_image_view /drone_1/aruco_detector/debug          # ladiaci obraz
+```
+
+Výstup v `~/lrs_tests/seed<N>_<čas>/`: `follow.log`, `summary.txt`, `bag/`. Dron splní §4, keď
+aspoň raz sleduje (TRACK), aspoň raz rover naozaj stratí a znova nájde a nemá ABORT.
+Detektor každých 10 s vypíše aj „posun z oneskorenia" = rýchlosť drona × čas spracovania snímky.

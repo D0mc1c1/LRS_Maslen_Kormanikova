@@ -7,6 +7,7 @@
 #   ros2 launch lrs_bringup follow.launch.py drones:=1             # len drone_1
 #   ros2 launch lrs_bringup follow.launch.py drones:=1 fake:=true  # fake_target namiesto detektora
 #   ros2 launch lrs_bringup follow.launch.py slow:=true            # pomala simulacia (RTF < 1)
+#   ros2 launch lrs_bringup follow.launch.py debug:=true           # ladiaci obraz drone_N/aruco_detector/debug
 #
 # sysid drona = marker_id jeho roveru = N. drone_2 hlada vo vacsej vyske (12 m), aby sa
 # vyhladavacie vzory oboch dronov neprekryvali vo vyske (plan 2.6).
@@ -35,6 +36,7 @@ def _nodes(context):
     drones_arg = context.launch_configurations['drones']
     fake = _truthy(context.launch_configurations['fake'])
     slow = _truthy(context.launch_configurations['slow'])
+    debug = _truthy(context.launch_configurations['debug'])
 
     drones = []
     for tok in drones_arg.replace(' ', '').split(','):
@@ -43,11 +45,14 @@ def _nodes(context):
         drones.append(int(tok))
 
     follow_over = {}
-    vision_over = {}
+    vision_over = {'publish_debug': debug}
     if slow:
         # plan 7.5 a 7.7: pomala simulacia sposobuje falosny abort a stare polohy
-        follow_over = {'pose_timeout': 2.0, 'state_timeout': 8.0}
-        vision_over = {'pose_max_age': 1.0}
+        # vzlet: poloha chodi s oneskorenim, ArduPilot konci vzlet ~0.4 m pod cielom
+        # lost_timeout: pri ~5 Hz kamere a manevri kratky vypadok detekcii nie je strata
+        follow_over = {'pose_timeout': 2.0, 'state_timeout': 8.0,
+                       'takeoff_tol': 0.6, 'takeoff_timeout': 90.0, 'lost_timeout': 3.0}
+        vision_over['pose_max_age'] = 1.5
 
     nodes = []
     for n in drones:
@@ -80,5 +85,7 @@ def generate_launch_description():
                               description='fake_target namiesto aruco_detector'),
         DeclareLaunchArgument('slow', default_value='false',
                               description='dlhsie timeouty pre pomalu simulaciu'),
+        DeclareLaunchArgument('debug', default_value='false',
+                              description='ladiaci obraz s vyznacenymi znackami'),
         OpaqueFunction(function=_nodes),
     ])

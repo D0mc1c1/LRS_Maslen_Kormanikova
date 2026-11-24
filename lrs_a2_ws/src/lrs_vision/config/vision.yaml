@@ -13,3 +13,6 @@
     over_xy: 0.3
     # [s] ako casto vypisat statistiku (snimky, detekcie, cas spracovania)
     stats_period: 10.0
+    # ladiaci obraz ~/debug (zelena = vlastna znacka, cervena = cudzia); stoji cas -> predvolene vypnute,
+    # zapina follow.launch.py debug:=true
+    publish_debug: false

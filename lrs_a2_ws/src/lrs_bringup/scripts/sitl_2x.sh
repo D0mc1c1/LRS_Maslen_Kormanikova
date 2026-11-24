@@ -17,12 +17,16 @@
 #
 # Premenne prostredia:
 #   ARDUPILOT_DIR  (predvolene ~/ardupilot)
+#   SITL_STREAMRATE (predvolene 20 Hz): ako casto MAVProxy ziada od ArduPilota polohu a stav.
+#     MAVProxy ma predvolene 4 Hz simulacneho casu; pri pomalej simulacii (RTF ~0.25) to je
+#     ~1 Hz realne a follow_mission aj detektor maju staru polohu (falosny ABORT vzletu).
 #   ARDUPILOT_VENV (predvolene ~/venv-ardupilot, ak existuje, aktivuje sa)
 set -euo pipefail
 
 ARDUPILOT_DIR="${ARDUPILOT_DIR:-$HOME/ardupilot}"
 ARDUPILOT_VENV="${ARDUPILOT_VENV:-$HOME/venv-ardupilot}"
 SESSION="sitl2x"
+STREAMRATE="${SITL_STREAMRATE:-20}"
 
 # domovske polohy = skutocne miesta dronov vo svete (-10,-10) a (10,-10), zo zadania
 HOME_1="48.15135451,17.07361560,150,0"
@@ -71,13 +75,13 @@ sitl_cmd() {
   echo "${activate}cd '$ARDUPILOT_DIR/ArduCopter' && python3 '$SIM_VEHICLE' \
 -v ArduCopter -f gazebo-iris --model JSON --add-param-file='$PARM' \
 --instance $inst --sysid $sysid --use-dir /tmp/ardupilot-drone$sysid \
---no-rebuild --console -l $home"
+--no-rebuild --console -l $home --mavproxy-args='--streamrate=$STREAMRATE'"
 }
 
 mkdir -p /tmp/ardupilot-drone1 /tmp/ardupilot-drone2
 tmux new-session -d -s "$SESSION" -n drone_1 "$(sitl_cmd 0 1 "$HOME_1"); bash"
 tmux new-window -t "$SESSION" -n drone_2 "$(sitl_cmd 1 2 "$HOME_2"); bash"
 
-echo "Oba SITL bezia v tmux session '$SESSION'."
+echo "Oba SITL bezia v tmux session '$SESSION' (MAVLink streamrate $STREAMRATE Hz)."
 echo "  tmux attach -t $SESSION      (Ctrl+b n = dalsie okno, Ctrl+b d = odpojit)"
 echo "  tmux kill-session -t $SESSION"

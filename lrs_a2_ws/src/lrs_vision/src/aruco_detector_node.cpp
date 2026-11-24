@@ -8,12 +8,14 @@
 // Temy relativne k namespace uzla (drone_N):
 //   in:  down_camera/image_raw, down_camera/camera_info, mavros/local_position/pose
 //   out: target/pose (PoseStamped, len pri platnej detekcii vlastnej znacky)
+//        ~/debug (Image, len ak publish_debug: zelena = vlastna, cervena = cudzia znacka)
 //
 // Spracovanie obrazu bezi vo vlastnej callback group (image_group), poloha a camera_info
 // v sensor_group, takze pomala snimka nezdrzi prijem polohy.
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <cstdio>
 #include <cmath>
 #include <map>
 #include <memory>
@@ -87,6 +89,7 @@ public:
     pose_max_age_ = declare_parameter<double>("pose_max_age", 0.5);
     over_xy_ = declare_parameter<double>("over_xy", 0.3);
     stats_period_ = declare_parameter<double>("stats_period", 10.0);
+    publish_debug_ = declare_parameter<bool>("publish_debug", false);
 
     if (marker_size_ <= 0.0 || marker_size_ > 2.0) {
       throw std::runtime_error("marker_size mimo rozsahu 0..2 m");
@@ -114,12 +117,23 @@ public:
     pose_sub_ = create_subscription<geometry_msgs::msg::PoseStamped>(
       "mavros/local_position/pose", rclcpp::SensorDataQoS(),
       [this](geometry_msgs::msg::PoseStamped::ConstSharedPtr m) {
+        const rclcpp::Time t = now();
         std::lock_guard<std::mutex> lk(mutex_);
+        // vodorovna rychlost drona z dvoch po sebe iducich poloh (pre odhad chyby z oneskorenia)
+        const double dt = pose_rx_.nanoseconds() ? (t - pose_rx_).seconds() : 0.0;
+        if (dt > 0.01 && dt < 1.0) {
+          const double v = std::hypot(m->pose.position.x - pose_.pose.position.x,
+              m->pose.position.y - pose_.pose.position.y) / dt;
+          speed_ = 0.8 * speed_ + 0.2 * v;
+        }
         pose_ = *m;
-        pose_rx_ = now();
+        pose_rx_ = t;
       }, sensor_opts);
 
     target_pub_ = create_publisher<geometry_msgs::msg::PoseStamped>("target/pose", 10);
+    if (publish_debug_) {
+      debug_pub_ = create_publisher<sensor_msgs::msg::Image>("~/debug", rclcpp::SensorDataQoS());
+    }
 
     const auto & R = extr_.R_body_optical;
     RCLCPP_INFO(get_logger(),
@@ -157,11 +171,13 @@ private:
     lrs_vision::CameraIntrinsics cam;
     geometry_msgs::msg::PoseStamped pose;
     rclcpp::Time pose_rx;
+    double speed = 0.0;
     {
       std::lock_guard<std::mutex> lk(mutex_);
       cam = cam_;
       pose = pose_;
       pose_rx = pose_rx_;
+      speed = speed_;
     }
     if (!cam.valid) {
       RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000, "cakam na down_camera/camera_info");
@@ -194,6 +210,8 @@ private:
     const auto & dp = pose.pose.position;
     const cv::Matx33d R_enu_body = lrs_vision::rotationFromQuaternion(q.x, q.y, q.z, q.w);
     const cv::Vec3d drone_pos(dp.x, dp.y, dp.z);
+    int own_index = -1;
+    std::string own_text;
 
     for (size_t i = 0; i < ids.size(); ++i) {
       if (ids[i] != marker_id_) {
@@ -211,6 +229,11 @@ private:
       const cv::Vec3d p_body = lrs_vision::opticalToBody(*p_opt, extr_);
       const cv::Vec3d p_enu = lrs_vision::bodyToEnu(p_body, drone_pos, R_enu_body);
       ++own_;
+      own_index = static_cast<int>(i);
+      char buf[96];
+      std::snprintf(buf, sizeof(buf), "id %d  %.1f m  ENU %.1f %.1f", ids[i], (*p_opt)[2],
+        p_enu[0], p_enu[1]);
+      own_text = buf;
 
       geometry_msgs::msg::PoseStamped out;
       out.header.stamp = stamp;
@@ -232,23 +255,62 @@ private:
           "vyska znacky %.2f m (ocakavane ~0.32), odhad ENU (%.2f, %.2f)",
           dp.z, (*p_opt)[2], dp.z - 0.03 - 0.32, p_enu[2], p_enu[0], p_enu[1]);
       }
-      break;  // vlastna znacka je len jedna
+      // bez break: aj cudzie znacky za vlastnou sa zapocitaju do statistiky
+    }
+
+    if (debug_pub_) {
+      publishDebug(msg, gray, corners, ids, own_index, own_text);
     }
 
     const double ms = std::chrono::duration<double, std::milli>(
       std::chrono::steady_clock::now() - t_start).count();
     proc_ms_sum_ += ms;
+    proc_ms_max_ = std::max(proc_ms_max_, ms);
+    // za cas spracovania sa dron posunie o v*t: o tolko je detekcia "stara" (zadanie, tip 3)
+    lag_err_sum_ += speed * ms / 1000.0;
+    speed_sum_ += speed;
     const double since = (stamp - last_stats_).seconds();
     if (last_stats_.nanoseconds() == 0) {
       last_stats_ = stamp;
     } else if (since >= stats_period_) {
+      const double n = frames_ ? static_cast<double>(frames_) : 1.0;
       RCLCPP_INFO(get_logger(),
-        "za %.0f s: snimky %d (%.1f Hz), vlastna znacka %d, cudzia %d, spracovanie %.1f ms/snimka",
-        since, frames_, frames_ / since, own_, foreign_, frames_ ? proc_ms_sum_ / frames_ : 0.0);
+        "za %.0f s: snimky %d (%.1f Hz), vlastna znacka %d, cudzia %d, spracovanie %.1f ms "
+        "(max %.1f), rychlost drona %.2f m/s -> posun z oneskorenia %.3f m",
+        since, frames_, frames_ / since, own_, foreign_, proc_ms_sum_ / n, proc_ms_max_,
+        speed_sum_ / n, lag_err_sum_ / n);
       frames_ = own_ = foreign_ = 0;
-      proc_ms_sum_ = 0.0;
+      proc_ms_sum_ = proc_ms_max_ = lag_err_sum_ = speed_sum_ = 0.0;
       last_stats_ = stamp;
     }
+  }
+
+  // ladiaci obraz: vsetky znacky orámovane, vlastna zelena, cudzie cervene, kriz = stred obrazu
+  void publishDebug(
+    const sensor_msgs::msg::Image::ConstSharedPtr & msg, const cv::Mat & gray,
+    const std::vector<std::vector<cv::Point2f>> & corners, const std::vector<int> & ids,
+    int own_index, const std::string & own_text)
+  {
+    cv::Mat img;
+    cv::cvtColor(gray, img, cv::COLOR_GRAY2BGR);
+    const cv::Point c(img.cols / 2, img.rows / 2);
+    cv::line(img, c - cv::Point(12, 0), c + cv::Point(12, 0), cv::Scalar(255, 200, 0), 1);
+    cv::line(img, c - cv::Point(0, 12), c + cv::Point(0, 12), cv::Scalar(255, 200, 0), 1);
+    for (size_t i = 0; i < ids.size(); ++i) {
+      const bool own = static_cast<int>(i) == own_index;
+      const cv::Scalar col = own ? cv::Scalar(0, 220, 0) : cv::Scalar(0, 0, 255);
+      std::vector<cv::Point> poly;
+      for (const auto & p : corners[i]) {
+        poly.emplace_back(cvRound(p.x), cvRound(p.y));
+      }
+      cv::polylines(img, poly, true, col, 2);
+      cv::putText(img, own ? own_text : "cudzia id " + std::to_string(ids[i]),
+        poly[0] + cv::Point(0, -8), cv::FONT_HERSHEY_SIMPLEX, 0.5, col, 1);
+    }
+    cv::putText(img, std::string(get_namespace()) + "  moja znacka " + std::to_string(marker_id_),
+      cv::Point(8, 20), cv::FONT_HERSHEY_SIMPLEX, 0.55, cv::Scalar(255, 255, 255), 1);
+    auto out = cv_bridge::CvImage(msg->header, "bgr8", img).toImageMsg();
+    debug_pub_->publish(*out);
   }
 
   int marker_id_{1};
@@ -256,6 +318,7 @@ private:
   double pose_max_age_{0.5};
   double over_xy_{0.3};
   double stats_period_{10.0};
+  bool publish_debug_{false};
   lrs_vision::CameraExtrinsics extr_;
 #if LRS_ARUCO_NEW_API
   cv::aruco::Dictionary dictionary_;
@@ -268,10 +331,11 @@ private:
   lrs_vision::CameraIntrinsics cam_;
   geometry_msgs::msg::PoseStamped pose_;
   rclcpp::Time pose_rx_{0, 0, RCL_ROS_TIME};
+  double speed_{0.0};  // [m/s] vodorovna rychlost drona (vyhladena)
 
   // statistiky (len v image_group)
   int frames_{0}, own_{0}, foreign_{0};
-  double proc_ms_sum_{0.0};
+  double proc_ms_sum_{0.0}, proc_ms_max_{0.0}, lag_err_sum_{0.0}, speed_sum_{0.0};
   rclcpp::Time last_stats_{0, 0, RCL_ROS_TIME};
 
   rclcpp::CallbackGroup::SharedPtr image_group_, sensor_group_;
@@ -279,6 +343,7 @@ private:
   rclcpp::Subscription<sensor_msgs::msg::CameraInfo>::SharedPtr info_sub_;
   rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr pose_sub_;
   rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr target_pub_;
+  rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr debug_pub_;
 };
 
 int main(int argc, char ** argv)
