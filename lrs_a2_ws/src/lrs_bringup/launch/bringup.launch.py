@@ -44,7 +44,7 @@ def generate_launch_description():
         actions.append(Node(
             package='mavros',
             executable='mavros_node',
-            namespace=f'drone_{n}',
+            namespace=f'drone_{n}/mavros',
             output='screen',
             parameters=[{
                 'fcu_url': f"udp://0.0.0.0:{d['port']}@",
