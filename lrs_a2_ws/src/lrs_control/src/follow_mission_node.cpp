@@ -53,6 +53,7 @@ public:
     p.track_lead = declare_parameter("track_lead", p.track_lead);
     p.track_max_speed = declare_parameter("track_max_speed", p.track_max_speed);
     p.track_max_vz = declare_parameter("track_max_vz", p.track_max_vz);
+    p.track_max_target_speed = declare_parameter("track_max_target_speed", p.track_max_target_speed);
 
     if (p.search_alt < 2.0 || p.search_alt > 30.0) {
       throw std::runtime_error("search_alt mimo rozsahu 2..30 m");

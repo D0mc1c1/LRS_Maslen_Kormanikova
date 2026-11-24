@@ -4,6 +4,11 @@
 //   rezidual    r   = z - x_p
 //   oprava      x   = x_p + alpha r,   v = v + (beta / dt) r
 // alpha: ako velmi verit novej detekcii, beta: ako rychlo sa prisposobi rychlost.
+//
+// alpha a beta su zadane pre detekcie kazdych dt_ref = 0.1 s (10 Hz). Pri castejsich
+// detekciach sa zosilnenia zmensia tak, aby filter za sekundu urobil rovnako velku opravu:
+//   alpha_dt = 1 - (1 - alpha)^(dt / dt_ref),   oprava rychlosti = beta * dt / dt_ref^2 * r
+// Inak by detektor s 28 Hz opravoval 2.8x castejsie a odhad rychlosti by bol zasumeny.
 #include <algorithm>
 #include <cmath>
 
@@ -14,10 +19,11 @@ namespace lrs_control
 
 struct TrackerParams
 {
-  double alpha{0.5};
-  double beta{0.1};
+  double alpha{0.3};
+  double beta{0.02};
   double gate{3.0};        // [m] detekcia dalej od predikcie sa zahodi
-  double max_speed{3.0};   // [m/s] strop odhadu rychlosti
+  double max_speed{1.5};   // [m/s] strop odhadu rychlosti roveru
+  double dt_ref{0.1};      // [s] pre tento interval detekcii su zadane alpha a beta
   int reset_after{5};      // po tolkych zahodenych za sebou sa filter resetuje
 };
 
@@ -57,8 +63,11 @@ public:
       return false;
     }
     rejects_ = 0;
-    const double k = p_.beta / std::max(dt, 0.05);
-    x_ = {xp.x + p_.alpha * rx, xp.y + p_.alpha * ry, z.z};
+    // po dlhsej medzere nie vacsie zosilnenie ako pri 10 Hz
+    const double f = std::min(dt, p_.dt_ref) / p_.dt_ref;
+    const double a = 1.0 - std::pow(1.0 - p_.alpha, f);
+    const double k = p_.beta * f / p_.dt_ref;
+    x_ = {xp.x + a * rx, xp.y + a * ry, z.z};
     v_ = {v_.x + k * rx, v_.y + k * ry, 0.0};
     const double s = std::hypot(v_.x, v_.y);
     if (s > p_.max_speed) {

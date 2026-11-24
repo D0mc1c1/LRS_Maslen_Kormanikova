@@ -25,6 +25,7 @@ FollowExecutor::FollowExecutor(Vehicle & vehicle, FollowParams params, Logger lo
   tp.alpha = p_.track_alpha;
   tp.beta = p_.track_beta;
   tp.gate = p_.track_gate;
+  tp.max_speed = p_.track_max_target_speed;
   tracker_ = AlphaBetaTracker(tp);
 }
 
@@ -325,11 +326,9 @@ void FollowExecutor::onTrack(
   // 3. setpoint sa k cielu posuva najviac track_max_speed (bez skokov)
   const double dt = std::clamp(now - track_tick_t_, 0.0, 0.2);
   track_tick_t_ = now;
-  const Vec3 prev = track_sp_;
   const double dx = goal.x - track_sp_.x, dy = goal.y - track_sp_.y;
   const double dxy = std::hypot(dx, dy), max_xy = p_.track_max_speed * dt;
-  const bool limited = dxy > max_xy;
-  if (limited) {
+  if (dxy > max_xy) {
     track_sp_.x += dx / dxy * max_xy;
     track_sp_.y += dy / dxy * max_xy;
   } else {
@@ -339,15 +338,13 @@ void FollowExecutor::onTrack(
   const double max_z = p_.track_max_vz * dt;
   track_sp_.z += std::clamp(goal.z - track_sp_.z, -max_z, max_z);
 
-  // 4. feedforward: rychlost roveru, pri dobiehani rychlost setpointu
+  // 4. feedforward: vzdy len odhadnuta rychlost roveru. Nie rychlost setpointu pri
+  //    dobiehani: tu by aj sum detekcie (skok ciela o > 0.1 m za tick) zmenil na plnych
+  //    track_max_speed a dron by kopal tam a spat.
   TrajectorySetpoint sp;
   sp.p = track_sp_;
   const Vec3 vr = tracker_.velocity();
-  if (limited && dt > 0.0) {
-    sp.v = Vec3{(track_sp_.x - prev.x) / dt, (track_sp_.y - prev.y) / dt, 0.0};
-  } else {
-    sp.v = Vec3{vr.x, vr.y, 0.0};
-  }
+  sp.v = Vec3{vr.x, vr.y, 0.0};
   sp.yaw = launch_yaw_;
   vehicle_.sendTrajectorySetpoint(sp);
 }

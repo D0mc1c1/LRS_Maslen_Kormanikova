@@ -46,12 +46,13 @@ struct FollowParams
   double cam_aspect{0.75};
 
   // sledovanie
-  double track_alpha{0.5};
-  double track_beta{0.1};
+  double track_alpha{0.3};
+  double track_beta{0.02};
   double track_gate{3.0};          // [m]
-  double track_lead{0.2};          // [s] mierit tam, kde rover bude o tento cas
+  double track_lead{0.1};          // [s] mierit tam, kde rover bude o tento cas
   double track_max_speed{2.0};     // [m/s] strop rychlosti setpointu vodorovne
   double track_max_vz{1.0};        // [m/s] strop rychlosti setpointu zvisle
+  double track_max_target_speed{1.5};  // [m/s] strop odhadu rychlosti roveru
   // TODO: dalsie parametre
 };
 

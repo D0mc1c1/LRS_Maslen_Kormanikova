@@ -1,9 +1,16 @@
 // Offline test FollowExecutor bez ROS a bez simulatora.
-// usage: follow_sim [takeoff|search|confirm|track [naive]|lost|abort [LOITER|BRAKE|RTL]|rc|linkloss]
+// usage: follow_sim [takeoff|search|confirm|track [naive]|lost|abort [LOITER|BRAKE|RTL]|
+//                    gazebo [+|-]|rc|linkloss]
+// gazebo: detektor ako v Gazebe (seed 42): 28 Hz, sum 4 cm a chyba z naklonu drona, ktory
+// MAVROS hlasi neskor ako ho vidi kamera (z rosbagu ~15 ms, test 50 ms = prisnejsie);
+// rover ako randomize_rovers.py. "-" = opacne znamienko chyby (stabilnejsi pripad).
+// Na ladenie: premenne ALPHA, BETA, LEAD, MAXV prepisu parametre sledovania, TAU oneskorenie.
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <deque>
+#include <numeric>
 #include <random>
 #include <string>
 #include <vector>
@@ -43,10 +50,10 @@ int main(int argc, char ** argv)
 {
   const std::string sc = argc > 1 ? argv[1] : "takeoff";
   if (sc != "takeoff" && sc != "search" && sc != "confirm" && sc != "track" && sc != "lost" &&
-    sc != "abort" && sc != "rc" && sc != "linkloss")
+    sc != "abort" && sc != "gazebo" && sc != "rc" && sc != "linkloss")
   {
     std::printf("usage: follow_sim [takeoff|search|confirm|track [naive]|lost|"
-      "abort [LOITER|BRAKE|RTL]|rc|linkloss]\n");
+      "abort [LOITER|BRAKE|RTL]|gazebo [+|-]|rc|linkloss]\n");
     return 1;
   }
 
@@ -58,6 +65,10 @@ int main(int argc, char ** argv)
     p.track_beta = 0.0;
     p.track_lead = 0.0;
   }
+  if (const char * e = std::getenv("ALPHA")) {p.track_alpha = std::atof(e);}
+  if (const char * e = std::getenv("BETA")) {p.track_beta = std::atof(e);}
+  if (const char * e = std::getenv("LEAD")) {p.track_lead = std::atof(e);}
+  if (const char * e = std::getenv("MAXV")) {p.track_max_target_speed = std::atof(e);}
   if (sc == "abort" && argc > 2) {
     p.abort_mode = argv[2];
   }
@@ -104,6 +115,21 @@ int main(int argc, char ** argv)
       return sc == "lost" && track_t > 0.0 &&
              ((t >= track_t + 30.0 && t < track_t + 36.0) || (t >= track_t + 70.0 && t < track_t + 76.0));
     };
+  // gazebo: rover ako randomize_rovers.py (0.15-0.4 m/s, +-0.2 rad/s, nova hodnota kazdych
+  // 3-6 s, rampa 0.2 m/s^2, do 4 m od stredu), detektor 28 Hz so sumom a chybou z naklonu
+  const double tilt_sign = (argc > 2 && std::string(argv[2]) == "-") ? -1.0 : 1.0;
+  const double tilt_delay = std::getenv("TAU") ? std::atof(std::getenv("TAU")) : 0.05;
+  std::uniform_real_distribution<double> u01(0.0, 1.0);
+  double g_speed = 0.3, g_rate = 0.0, g_cmd_speed = 0.3, g_cmd_rate = 0.0, g_next = 0.0;
+  double g_yaw = 0.0, g_next_det = 0.0;
+  std::normal_distribution<double> g_noise(0.0, 0.04);
+  std::deque<std::pair<double, Vec3>> acc_hist;   // (cas, zrychlenie drona)
+  Vec3 prev_vel{}, tilt{};   // tilt = naklon [rad] v smere x, y (ENU)
+  long ff_n = 0, ff_big = 0;
+  double acc_se = 0.0, gv_max = 0.0;
+  int acc_n = 0;
+  std::vector<double> gvx;
+
   State prev = State::WAIT_CONNECTION;
   double abort_t = -1.0, mode_ok_t = -1.0;
   Vec3 abort_pos{};
@@ -158,8 +184,68 @@ int main(int argc, char ** argv)
         obs.push_back({veh.t(), {-30.0, 20.0, 0.0}});
       }
     }
+    if (sc == "gazebo") {
+      // rover
+      if (veh.t() >= g_next) {
+        g_cmd_speed = 0.15 + 0.25 * u01(rng);
+        g_cmd_rate = -0.2 + 0.4 * u01(rng);
+        g_next = veh.t() + 3.0 + 3.0 * u01(rng);
+      }
+      const Vec3 off{rpos.x - rc.x, rpos.y - rc.y, 0.0};
+      if (std::hypot(off.x, off.y) > 4.0) {   // spat k stredu
+        const double want = std::atan2(-off.y, -off.x);
+        g_cmd_rate = std::clamp(2.0 * std::remainder(want - g_yaw, 2.0 * M_PI), -0.2, 0.2);
+      }
+      g_speed += std::clamp(g_cmd_speed - g_speed, -0.2 * dt, 0.2 * dt);
+      g_rate += std::clamp(g_cmd_rate - g_rate, -0.2 * dt, 0.2 * dt);
+      g_yaw += g_rate * dt;
+      rpos.x += g_speed * std::cos(g_yaw) * dt;
+      rpos.y += g_speed * std::sin(g_yaw) * dt;
+      // zrychlenie drona (naklon ~ a / g) a jeho historia
+      const Vec3 acc{(st0.vel.x - prev_vel.x) / dt, (st0.vel.y - prev_vel.y) / dt, 0.0};
+      prev_vel = st0.vel;
+      // naklon ~ zrychlenie / g, s dynamikou natocenia (casova konstanta 0.2 s)
+      const double lp = dt / (0.2 + dt);
+      tilt.x += lp * (acc.x / 9.81 - tilt.x);
+      tilt.y += lp * (acc.y / 9.81 - tilt.y);
+      acc_hist.push_back({veh.t(), tilt});
+      while (acc_hist.size() > 2 && acc_hist.front().first < veh.t() - 0.5) {acc_hist.pop_front();}
+      Vec3 tilt_old = acc_hist.front().second;
+      for (const auto & h : acc_hist) {
+        if (h.first <= veh.t() - tilt_delay + 1e-9) {tilt_old = h.second;}
+      }
+      // detektor 28 Hz: chyba = vyska * (naklon teraz - naklon, ktory hlasi MAVROS s oneskorenim)
+      const double kt = st0.pos.z * tilt_sign;
+      while (search_t > 0.0 && g_next_det <= veh.t()) {
+        const Vec3 rel{rpos.x - st0.pos.x, rpos.y - st0.pos.y, -st0.pos.z};
+        if (lrs_control::inFootprint(rel, st0.yaw, st0.pos.z, cam)) {
+          obs.push_back({g_next_det, {rpos.x + g_noise(rng) + kt * (tilt.x - tilt_old.x),
+              rpos.y + g_noise(rng) + kt * (tilt.y - tilt_old.y), 0.0}});
+        }
+        g_next_det += 1.0 / 28.0;
+      }
+      if (g_next_det < veh.t() - 1.0) {g_next_det = veh.t();}
+    }
     ex.tick(veh.t(), obs);
     const auto st = veh.state();
+    if (sc == "gazebo" && ex.state() == State::TRACK) {
+      if (track_t < 0.0) {track_t = veh.t();}
+      if (veh.t() > track_t + 10.0) {
+        const double e = lrs_control::distXY(st.pos, rpos);
+        se += e * e;
+        emax = std::max(emax, e);
+        ++ne;
+        const Vec3 ff = veh.lastSetpoint().v.value_or(Vec3{});
+        ++ff_n;
+        ff_big += std::hypot(ff.x, ff.y) > 0.6 ? 1 : 0;
+        const double a = std::hypot(tilt.x, tilt.y);   // [rad]
+        acc_se += a * a;
+        ++acc_n;
+        gv_max = std::max(gv_max, std::hypot(st.vel.x, st.vel.y));
+        gvx.push_back(st.vel.x);
+      }
+      if (veh.t() > track_t + 260.0) {break;}
+    }
     if (sc == "confirm" && search_t > 0.0 && veh.t() < search_t + 3.0 &&
       ex.state() == State::TRACK)
     {
@@ -262,6 +348,29 @@ int main(int argc, char ** argv)
       no_sp ? "ziadne" : "STALE CHODIA", veh.landRequests(), moved);
     ok = ex.state() == State::ABORT && mode_ok_t > 0.0 && mode_ok_t - abort_t < 2.0 && no_sp &&
       veh.landRequests() == 0 && (p.abort_mode == "RTL" || moved < 0.5);
+  } else if (sc == "gazebo") {
+    const double rms = ne > 0 ? std::sqrt(se / ne) : 1e9;
+    const double tilt_rms = std::sqrt(acc_se / std::max(acc_n, 1)) * 180.0 / M_PI;
+    // dominantna frekvencia kmitania vx (DFT 0.2-2 Hz)
+    double best_a = 0.0, best_f = 0.0;
+    const double mean = gvx.empty() ? 0.0 :
+      std::accumulate(gvx.begin(), gvx.end(), 0.0) / gvx.size();
+    for (double f = 0.2; f <= 2.0; f += 0.02) {
+      double re = 0.0, im = 0.0;
+      for (std::size_t i = 0; i < gvx.size(); ++i) {
+        re += (gvx[i] - mean) * std::cos(2 * M_PI * f * i * dt);
+        im += (gvx[i] - mean) * std::sin(2 * M_PI * f * i * dt);
+      }
+      const double a = 2.0 * std::hypot(re, im) / std::max<std::size_t>(gvx.size(), 1);
+      if (a > best_a) {best_a = a; best_f = f;}
+    }
+    std::printf("gazebo (naklon %s): odchylka nad roverom RMS %.2f m, max %.2f m\n"
+      "  feedforward > 0.6 m/s: %.1f %% tickov, max rychlost drona %.2f m/s\n"
+      "  naklon RMS %.1f deg, kmitanie vx %.2f Hz s amplitudou %.2f m/s\n",
+      tilt_sign > 0 ? "+" : "-", rms, emax, 100.0 * ff_big / std::max(ff_n, 1L), gv_max,
+      tilt_rms, best_f, best_a);
+    ok = track_t > 0.0 && ex.state() == State::TRACK && rms < 0.3 && ff_big < 0.02 * ff_n &&
+      tilt_rms < 3.0;
   } else if (sc == "lost") {
     double worst = 0.0;
     for (std::size_t i = 0; i < lost_delay.size(); ++i) {
