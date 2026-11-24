@@ -1,2 +1,31 @@
-# TODO: image_raw a camera_info oboch kamier
-[]
+# ros_gz_bridge: spodne kamery oboch dronov, len gz -> ROS.
+# image_raw je v SDF (<topic>drone_N/down_camera/image_raw</topic>), camera_info publikuje
+# gz-sim sam vedla neho. Nazvy overit na beziacom svete:
+#   gz topic -l | grep down_camera
+#   gz topic -i -t /drone_1/down_camera/camera_info
+# Spustenie samostatne:
+#   ros2 run ros_gz_bridge parameter_bridge --ros-args -p config_file:=<cesta>/bridge.yaml
+
+- ros_topic_name: "/drone_1/down_camera/image_raw"
+  gz_topic_name: "drone_1/down_camera/image_raw"
+  ros_type_name: "sensor_msgs/msg/Image"
+  gz_type_name: "gz.msgs.Image"
+  direction: GZ_TO_ROS
+
+- ros_topic_name: "/drone_1/down_camera/camera_info"
+  gz_topic_name: "drone_1/down_camera/camera_info"
+  ros_type_name: "sensor_msgs/msg/CameraInfo"
+  gz_type_name: "gz.msgs.CameraInfo"
+  direction: GZ_TO_ROS
+
+- ros_topic_name: "/drone_2/down_camera/image_raw"
+  gz_topic_name: "drone_2/down_camera/image_raw"
+  ros_type_name: "sensor_msgs/msg/Image"
+  gz_type_name: "gz.msgs.Image"
+  direction: GZ_TO_ROS
+
+- ros_topic_name: "/drone_2/down_camera/camera_info"
+  gz_topic_name: "drone_2/down_camera/camera_info"
+  ros_type_name: "sensor_msgs/msg/CameraInfo"
+  gz_type_name: "gz.msgs.CameraInfo"
+  direction: GZ_TO_ROS

@@ -1,7 +1,18 @@
+# Parametre aruco_detector (rovnake pre oba drony; marker_id dava follow.launch.py = N).
 /**/aruco_detector:
   ros__parameters:
     dictionary: "DICT_4X4_50"
+    # strana CIERNEHO stvorca znacky, nie dosky: 0.85 m * 800 px / 1066 px = 0.638 m (plan 3.2)
     marker_size: 0.638
+    # poloha a natocenie linku kamery v tele drona ako <pose> v SDF: 3 cm pod telom, pitch +90°
     cam_xyz: [0.0, 0.0, -0.03]
     cam_rpy_deg: [0.0, 90.0, 0.0]
-    # TODO: dalsie parametre
+    # [s] snimka sa preskoci, ak poloha z MAVROS je starsia (pomala simulacia: 1.0)
+    pose_max_age: 0.5
+    # [m] log "NAD ROVEROM", ked je znacka v tele drona blizsie ako over_xy v x aj y (§3)
+    over_xy: 0.3
+    # [s] ako casto vypisat statistiku (snimky, detekcie, cas spracovania)
+    stats_period: 10.0
+    # ladiaci obraz ~/debug (zelena = vlastna znacka, cervena = cudzia); stoji cas -> predvolene vypnute,
+    # zapina follow.launch.py debug:=true
+    publish_debug: false

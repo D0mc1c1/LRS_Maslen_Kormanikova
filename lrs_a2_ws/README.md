@@ -26,3 +26,84 @@ cd lrs_a2_ws
 colcon build --symlink-install
 source install/setup.bash
 ```
+
+## Bring-up dvoch dronov (§1)
+
+Každý krok vo vlastnom termináli, v poradí:
+
+```bash
+# 1. Gazebo (z koreňa repozitára LRS-URK)
+scripts/run_gazebo.sh fei_lrs_precision_landing.world
+
+# 2. Dva SITL v tmux (ArduCopter sa zbuilduje raz, potom oba s --no-rebuild)
+ros2 run lrs_bringup sitl_2x.sh          # --no-build, ak je už zbuildovaný
+tmux attach -t sitl2x                     # Ctrl+b n = ďalší dron, Ctrl+b d = odpojiť
+
+# 3. 2x MAVROS (témy /drone_N/mavros/...) + bridge kamier
+ros2 launch lrs_bringup bringup.launch.py
+
+# 4. Kontrola §1: každá téma má publishera, MAVROS connected, fx z camera_info, Hz obrazu
+ros2 run lrs_bringup check_bringup.sh
+```
+
+| | drone_1 | drone_2 |
+|---|---|---|
+| SITL | `--instance 0 --sysid 1` | `--instance 1 --sysid 2` |
+| MAVLink → MAVROS | UDP 14550 | UDP 14560 |
+| MAVROS uzol (namespace) | `drone_1` | `drone_2` |
+| MAVROS témy | `/drone_1/mavros/...` | `/drone_2/mavros/...` |
+| kamera | `/drone_1/down_camera/{image_raw,camera_info}` | `/drone_2/down_camera/{image_raw,camera_info}` |
+
+Záznam: `ros2 run lrs_bringup record.sh [meno]` (obraz len s `IMAGES=1`).
+
+## Misia find-and-follow (§2–§4)
+
+Po bring-upe (`check_bringup.sh` = PASS), keď drony stoja na zemi:
+
+```bash
+ros2 launch lrs_bringup follow.launch.py                         # oba drony, detektor
+ros2 launch lrs_bringup follow.launch.py drones:=1               # len drone_1
+ros2 launch lrs_bringup follow.launch.py drones:=1 fake:=true    # fake_target namiesto detektora
+ros2 launch lrs_bringup follow.launch.py slow:=true              # pomalá simulácia (dlhšie timeouty)
+
+ros2 topic echo /drone_1/target/pose                             # detekcie vlastného roveru
+ros2 service call /drone_1/follow_mission/abort std_srvs/srv/Trigger
+```
+
+Detektor `aruco_detector` (balík `lrs_vision`, parametre v `config/vision.yaml`):
+publikuje `target/pose` len pre značku s `id == marker_id == N`, cudziu značku loguje
+(„ignorujem cudziu znacku id …"), pri značke pod dronom loguje „NAD ROVEROM" (overenie §3)
+a každých 10 s štatistiku snímok a času spracovania.
+
+## Overenie polohy značky v Gazebe (§3)
+
+Odhad detektora (`/drone_N/target/pose`) sa porovná so skutočnou polohou roveru z Gazeba
+(`/model/aruco_rover_N/odometry`). Skutočná poloha ide cez samostatný bridge, ktorý sa
+spúšťa len na overenie; misia (`follow_mission`, `aruco_detector`) ju nepoužíva.
+
+```bash
+ros2 launch lrs_bringup bringup.launch.py truth:=true           # namiesto bežného bring-upu
+ros2 launch lrs_bringup follow.launch.py drones:=1 slow:=true    # dron nájde a sleduje rover
+ros2 run lrs_bringup verify_pose.py 1 --csv ~/verify_d1.csv      # Ctrl+C = súhrn
+```
+
+Prevod Gazebo → lokálny rámec drona: `x_lok = -y_gz`, `y_lok = x_gz` (ArduPilot berie os x
+Gazeba ako sever). Skript ho na štarte overí z polohy drona na zemi. Súhrn: chyba polohy
+(§3 splnený, keď medián < 0,638 m), stály posun (montáž kamery / rámec) a pomer vzdialeností
+odhad/skutočnosť (veľkosť značky a intrinziky).
+
+## Test sledovania s náhodným pohybom roverov (§4)
+
+Po bring-upe (drony na zemi) jeden príkaz pre každý seed: rosbag, `randomize_rovers.py --seed N`,
+misia na `--duration` s, potom pristátie oboch dronov a vyhodnotenie z logu.
+
+```bash
+ros2 run lrs_bringup run_follow_test.sh --slow --debug 42           # jeden seed, 300 s
+ros2 run lrs_bringup run_follow_test.sh --slow 42 7 123             # viac seedov za sebou
+ros2 run lrs_bringup analyze_follow_log.py ~/lrs_tests/seed42_*/follow.log   # znova vyhodnotiť
+ros2 run rqt_image_view rqt_image_view /drone_1/aruco_detector/debug          # ladiaci obraz
+```
+
+Výstup v `~/lrs_tests/seed<N>_<čas>/`: `follow.log`, `summary.txt`, `bag/`. Dron splní §4, keď
+aspoň raz sleduje (TRACK), aspoň raz rover naozaj stratí a znova nájde a nemá ABORT.
+Detektor každých 10 s vypíše aj „posun z oneskorenia" = rýchlosť drona × čas spracovania snímky.
